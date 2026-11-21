@@ -35,6 +35,17 @@ adding `include/zephyr` to the include path - no module files are modified.
 Consider opening an issue/PR upstream if you read this in a year and the
 shim is still needed 🙂.
 
+## Zephyr version compatibility
+
+| Zephyr version | Status | Notes |
+|---|---|---|
+| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`; this is the version verified in CI (`zephyrprojectrtos/zephyr-build:v0.26.17` container) and in the local WSL2 build flow. The `microros_compat/` shim is required for this version. |
+| v4.0.0 | Claimed, not tested for UDP | The micro-ROS module README claims v4.0.0 support, but its own CI only builds the **serial** transports. UDP header paths (`posix/sys/socket.h`) need the same shim treatment; untested on this combination. |
+| v4.2+ | **Known broken** | Upstream issue [#158](https://github.com/micro-ROS/micro_ros_zephyr_module/issues/158): Zephyr ≥4.2 moved POSIX APIs again (e.g. `zephyr/posix/time.h` → `zephyr/posix/sys/time.h`), breaking compilation for this app. Do not bump `west.yml` past v4.1.0 without re-testing. |
+| v3.x | Not supported | The UDP transport header targets Zephyr ≥3.2; pre-3.2 used a different header layout entirely (`zephyr/zephyr.h`, `include/posix/`). |
+
+**Do not edit `west.yml`'s `revision: v4.1.0` unless you're prepared to fix the resulting header/API breakages.** If you bump Zephyr, start from CI's failed-run logs (`Actions` tab on GitHub) and expect to update `microros_compat/CMakeLists.txt` and possibly `modules/libmicroros/microros_transports/udp/*` include paths again.
+
 ## Configuring the agent address
 
 Edit `prj.conf` before building:
