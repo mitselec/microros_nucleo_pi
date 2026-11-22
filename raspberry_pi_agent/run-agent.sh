@@ -9,7 +9,7 @@ docker run -d \
   --net=host \
   --privileged \
   -v /dev:/dev \
-  microros/micro-ros-agent:rolling \
+  microros/micro-ros-agent:kilted \
   udp4 --port 8888 -v6
 
 echo "Agent running (container: microros-agent). Logs: docker logs -f microros-agent"

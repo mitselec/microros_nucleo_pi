@@ -23,6 +23,8 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_ip.h>
 
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
@@ -33,7 +35,8 @@
 
 #include <rmw_microros/rmw_microros.h>
 #include <rmw_microros/ping.h>
-#include <microros_transports.h>
+
+#include "udp_transport.h"
 
 #define RCCHECK(fn)                                                            \
 	{                                                                          \
@@ -112,6 +115,40 @@ static int leds_init(void)
 	return 0;
 }
 
+/*
+ * Wait until the Ethernet interface has an IPv4 address. Pinging before DHCP
+ * completes only produces failed socket opens (and, in the stock module
+ * transport, leaked file descriptors).
+ */
+static void wait_for_ipv4(void)
+{
+	struct net_if *iface;
+
+	while ((iface = net_if_get_default()) == NULL) {
+		k_msleep(100);
+	}
+
+	printk("net: waiting for an IPv4 address on %s\n",
+	       net_if_get_device(iface)->name);
+
+	for (;;) {
+		struct net_if_addr *addr =
+			net_if_ipv4_get_global_addr(iface, NET_ADDR_ANY_STATE);
+
+		if (addr != NULL) {
+			char buf[NET_IPV4_ADDR_LEN];
+
+			printk("net: %s is %s\n",
+			       net_if_get_device(iface)->name,
+			       net_addr_ntop(AF_INET, &addr->address.in_addr,
+					     buf, sizeof(buf)));
+			return;
+		}
+
+		k_msleep(500);
+	}
+}
+
 int main(void)
 {
 	int ret;
@@ -121,34 +158,40 @@ int main(void)
 		printf("LED init failed (%d), continuing without LEDs\n", ret);
 	}
 
-#if defined(CONFIG_MICROROS_TRANSPORT_UDP)
-	/* Fill the UDP transport parameters from Kconfig. */
-	strcpy(default_params.ip, CONFIG_MICROROS_AGENT_IP);
-	strcpy(default_params.port, CONFIG_MICROROS_AGENT_PORT);
-	printf("micro-ROS UDP transport towards %s:%s\n",
-	       CONFIG_MICROROS_AGENT_IP, CONFIG_MICROROS_AGENT_PORT);
-#endif
+	wait_for_ipv4();
+
+	static app_udp_params_t transport_params = {
+		.fd = -1,
+	};
+
+	strcpy(transport_params.ip, CONFIG_MICROROS_AGENT_IP);
+	strcpy(transport_params.port, CONFIG_MICROROS_AGENT_PORT);
+	printk("micro-ROS UDP agent target %s:%s\n",
+	       transport_params.ip, transport_params.port);
 
 	rmw_uros_set_custom_transport(
-		MICRO_ROS_FRAMING_REQUIRED,
-		(void *)&default_params,
-		zephyr_transport_open,
-		zephyr_transport_close,
-		zephyr_transport_write,
-		zephyr_transport_read);
+		false, /* UDP datagrams are already framed by XRCE */
+		(void *)&transport_params,
+		app_udp_open,
+		app_udp_close,
+		app_udp_write,
+		app_udp_read);
 
-	/* Wait for the network to come up and for the agent to respond. */
+	/* Wait for the agent to answer. Log every attempt while the link is
+	 * still settling, then back off to every fifth attempt.
+	 */
 	int attempts = 0;
 	while (rmw_uros_ping_agent(1000, 1) != RMW_RET_OK) {
 		attempts++;
-		if (attempts % 5 == 0) {
-			printf("Waiting for the micro-ROS agent (%s:%s)...\n",
+		if (attempts <= 10 || attempts % 5 == 0) {
+			printf("Waiting for the micro-ROS agent (%s:%s), attempt %d...\n",
 			       CONFIG_MICROROS_AGENT_IP,
-			       CONFIG_MICROROS_AGENT_PORT);
+			       CONFIG_MICROROS_AGENT_PORT,
+			       attempts);
 		}
 		k_msleep(1000);
 	}
-	printf("Micro-ROS agent reachable, creating the node\n");
+	printf("micro-ROS agent reachable, creating the node\n");
 
 	rcl_allocator_t allocator = rcl_get_default_allocator();
 	rclc_support_t support;

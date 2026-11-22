@@ -18,6 +18,8 @@ nucleo_f767zi_microros/
   |- west.yml                # west manifest: pulls Zephyr v4.1.0 + micro-ROS module
   |- microros_compat/        # include-path shim module (see note below)
   |- src/main.c              # demo application
+  |- src/udp_transport.c     # self-contained UDP transport (see note below)
+  |- src/udp_transport.h
 ```
 
 After `west init`/`west update`, the workspace contains `zephyr/`,
@@ -34,6 +36,26 @@ its UDP transport code still uses the pre-Zephyr-3.4 header style
 adding `include/zephyr` to the include path - no module files are modified.
 Consider opening an issue/PR upstream if you read this in a year and the
 shim is still needed 🙂.
+
+### Why the app ships its own UDP transport
+
+The module's `microros_transports/udp` implementation is not exercised by
+upstream CI (which builds the serial transports only) and has two problems that
+show up on a DHCP network:
+
+1. It resolves the agent address with `getaddrinfo()`, which allocates memory
+   and is unnecessary for a numeric IPv4 address.
+2. If `socket()` succeeds but `connect()` fails (normal during boot, before
+   DHCP assigns an address), it returns `false` **without closing the socket**.
+   `rmw_uros_ping_agent()` retries in a loop, so the leaked descriptors
+   accumulate until `socket()` fails permanently: the board then never sends a
+   single UDP packet, even though ICMP ping still works.
+
+`src/udp_transport.c` replaces it with a small transport that parses the
+address with `zsock_inet_pton()`, closes the socket on every failure path, and
+prints the reason (`udp: connect() ... failed (errno N)`). `main.c` also waits
+for DHCP before the first ping. The module's transport library is still built
+because the Kconfig choice selects it, but the app no longer uses it.
 
 ## Zephyr version compatibility
 
@@ -148,12 +170,17 @@ there). The app tolerates a "wrong" agent gracefully: it keeps printing
 
 ## Test from the Pi
 
+The agent image is minimal and does **not** contain the `ros2` CLI. Use the
+multi-arch `ros:humble` image on the host network:
+
 ```bash
-docker exec microros-agent ros2 topic list
+docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic list"
 # should show /zephyr_heartbeat and /zephyr_led_cmd
-docker exec microros-agent ros2 topic echo /zephyr_heartbeat
+
 # toggle the blue LED from the Pi:
-docker exec microros-agent ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool "{data: true}"
+docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
 ```
 
 ## Serial transport fallback (optional)
@@ -173,6 +200,9 @@ framing is required (the Zephyr module's serial transports handle this via
 
 - The micro-ROS library is built as an ExternalProject on first build; a `make`/`colcon`
   sub-build failure most often means missing Python deps (step 1) or a Windows host build.
-- Board rev. with SoC marking A has unstable Ethernet (STM32 F767ZI erratum #26519 in Zephyr).
+- Older F767ZI boards have shown flaky Ethernet in some Zephyr versions
+  ([zephyr#26519](https://github.com/zephyrproject-rtos/zephyr/issues/26519),
+  closed). If ping works but other traffic drops, try a different cable/switch
+  port and check the board revision before blaming the firmware.
 - This module's Kconfig resource counters (`CONFIG_MICROROS_PUBLISHERS` etc.) are `string`
   typed oddities; leave the defaults unless you add more endpoints than the demo uses.

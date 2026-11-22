@@ -45,11 +45,12 @@ Equivalent one-liner (no compose file needed):
 
 ```bash
 docker run -d --name microros-agent --restart unless-stopped --net=host --privileged \
-  -v /dev:/dev microros/micro-ros-agent:rolling udp4 --port 8888 -v6
+  -v /dev:/dev microros/micro-ros-agent:kilted udp4 --port 8888 -v6
 ```
 
-The `microros/micro-ros-agent:rolling` image is published for `linux/amd64` and
-`linux/arm64`, so it runs directly on the Pi 3B+.
+The `microros/micro-ros-agent:kilted` image is published for `linux/amd64` and
+`linux/arm64`, so it runs directly on the Pi 3B+. Match the tag to the firmware's
+`micro_ros_zephyr_module` branch (both are `kilted` here).
 
 ## 3. Check it
 
@@ -60,29 +61,30 @@ docker logs -f microros-agent
 With the agent alone it says it is listening (`CLI ... port 8888`). Once the Nucleo
 connects, you will see session/client activity lines.
 
-## 4. Use it: ros2 CLI inside a container
+## 4. Use it: ros2 CLI in a container
 
-The agent image itself contains ROS 2, so the quickest tool is:
+The agent image is minimal and does **not** contain the `ros2` CLI. Use the
+multi-arch `ros:humble` image on the host network instead:
 
 ```bash
-docker exec -it microros-agent bash -lc "ros2 topic list"
+docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic list"
 # expect:
 #   /zephyr_heartbeat
 #   /zephyr_led_cmd
 #   /parameters
 ```
 
-For a full ROS 2 environment (rqt, etc.) run a desktop image, also on the host network:
+Blink the blue LED while watching the board:
 
 ```bash
-docker run -it --rm --network host osrf/ros:humble-desktop bash
-# inside the container:
-source /opt/ros/humble/setup.bash
-ros2 topic list
-ros2 topic echo /zephyr_heartbeat
-# blink the blue LED while watching the board:
-ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool "{data: true}"
+docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
 ```
+
+> `osrf/ros:humble-desktop` is **amd64-only** and fails on the Pi with
+> `exec format error`. `ros:humble` is published for arm64 and works.
+> The first pull is ~700 MB, so give the Pi a few minutes.
 
 > The Pi CPU is slow - first pulls/runs take a while, `ros2 topic pub -r 10` is plenty
 > for demos (leave `-r` default of 1 Hz for the LED command).
@@ -95,6 +97,12 @@ ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool "{data: true}"
 - **No topics?** Check that the Nucleo's `CONFIG_MICROROS_AGENT_IP` is this Pi's IP,
   port `8888`, that both are on the same subnet, and that no firewall blocks UDP 8888
   (`sudo netstat -lu | grep 8888` on the Pi should show the listener).
+- **Nucleo console stuck on "Waiting..."**: the firmware prints the transport state
+  (`net: ... is 192.168.x.y`, `udp: socket ... connected`, `udp: connect() ... failed`,
+  `udp: send() ... failed`). `connect()` before DHCP is retried safely; if it keeps
+  failing after the board has an IP, the Pi is not reachable at the configured address.
+  On the Pi, run `sudo tcpdump -i any host <nucleo-ip> -n` and reset the board to see
+  whether any packets leave it.
 - **Serial instead of UDP (alternative)**: run the agent with
   `serial --dev /dev/ttyACM0 -v6` inside a container that mounts `/dev`
   (`--privileged -v /dev:/dev`). Then the Nucleo must be switched to the serial

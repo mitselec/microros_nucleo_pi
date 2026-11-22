@@ -1,7 +1,7 @@
 services:
   micro-ros-agent:
     container_name: microros-agent
-    image: microros/micro-ros-agent:rolling
+    image: microros/micro-ros-agent:kilted
     # host networking: the agent listens on 0.0.0.0:8888 and participates
     # directly in the ROS 2 graph (DDS discovery via multicast)
     network_mode: host

@@ -37,16 +37,18 @@ flowchart LR
 1. Flash/prepare the Pi agents: see `raspberry_pi_agent/README.md` (Docker agent on `0.0.0.0:8888`).
 2. Find the Pi's IP (`hostname -I` on the Pi) and put it in `nucleo_f767zi_microros/prj.conf` as `CONFIG_MICROROS_AGENT_IP="..."`.
 3. Build + flash the Nucleo: see `nucleo_f767zi_microros/README.md` (build in WSL2, flash with STM32CubeProgrammer).
-4. Plug both into the same switch/router. On the Pi:
+4. Plug both into the same switch/router. On the Pi (the agent image has no `ros2` CLI, so use a separate container):
    ```bash
-   docker exec microros-agent ros2 topic echo /zephyr_heartbeat
-   docker exec microros-agent ros2 topic pub /zephyr_led_cmd std_msgs/msg/Bool "{data: true}"
+   docker run --rm --network host ros:humble \
+     bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /zephyr_heartbeat"
+   docker run --rm --network host ros:humble \
+     bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
    ```
 
 ## Hardware notes
 
 - **Ethernet**: the Nucleo-144 F767ZI has an onboard RJ45 with PHY (RMII). Connect it to the same LAN as the Pi. PA7 (crs_dv) is used by Ethernet - don't repurpose the Arduino SPI MOSI at the same time.
-- **Silicon revision**: board rev. with SoC marking **cut-A** has known Ethernet instability in Zephyr (zephyrproject-rtos/zephyr#26519). Use a cut-Z/rev. Z part if you see flaky links.
+- **Silicon revision**: older F767ZI boards have shown flaky Ethernet in some Zephyr versions ([zephyr#26519](https://github.com/zephyrproject-rtos/zephyr/issues/26519), closed). If ping works but other traffic drops, try a different cable/switch port and check the board revision before blaming the firmware.
 - ROS_DOMAIN_ID must match on both sides (default `0`).
 
 ## License
