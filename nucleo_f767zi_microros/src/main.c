@@ -132,7 +132,7 @@ static void wait_for_ipv4(void)
 	       net_if_get_device(iface)->name);
 
 	for (;;) {
-		struct net_if_addr *addr =
+		struct in_addr *addr =
 			net_if_ipv4_get_global_addr(iface, NET_ADDR_ANY_STATE);
 
 		if (addr != NULL) {
@@ -140,8 +140,7 @@ static void wait_for_ipv4(void)
 
 			printk("net: %s is %s\n",
 			       net_if_get_device(iface)->name,
-			       net_addr_ntop(AF_INET, &addr->address.in_addr,
-					     buf, sizeof(buf)));
+			       net_addr_ntop(AF_INET, addr, buf, sizeof(buf)));
 			return;
 		}
 
@@ -219,11 +218,12 @@ int main(void)
 
 	/* create periodic timer for the heartbeat */
 	const unsigned int timer_timeout = 1000;
-	RCCHECK(rclc_timer_init_default(
+	RCCHECK(rclc_timer_init_default2(
 		&heartbeat_timer,
 		&support,
 		RCL_MS_TO_NS(timer_timeout),
-		heartbeat_timer_callback));
+		heartbeat_timer_callback,
+		true));
 
 	/* create executor: timer + subscription */
 	rclc_executor_t executor;
