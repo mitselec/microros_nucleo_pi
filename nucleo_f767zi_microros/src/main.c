@@ -123,6 +123,7 @@ static int leds_init(void)
 static void wait_for_ipv4(void)
 {
 	struct net_if *iface;
+	unsigned int elapsed = 0;
 
 	while ((iface = net_if_get_default()) == NULL) {
 		k_msleep(100);
@@ -144,7 +145,16 @@ static void wait_for_ipv4(void)
 			return;
 		}
 
-		k_msleep(500);
+		/* Distinguish "no cable" from "DHCP did not answer". */
+		if (elapsed % 2 == 0) {
+			printk("net: no IPv4 yet (%us): carrier %s, iface %s\n",
+			       elapsed,
+			       net_if_is_carrier_ok(iface) ? "up" : "DOWN",
+			       net_if_is_up(iface) ? "up" : "DOWN");
+		}
+
+		k_msleep(1000);
+		elapsed++;
 	}
 }
 
