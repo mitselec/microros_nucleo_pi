@@ -132,6 +132,16 @@ static void wait_for_ipv4(void)
 	printk("net: waiting for an IPv4 address on %s\n",
 	       net_if_get_device(iface)->name);
 
+	{
+		struct net_linkaddr *mac = net_if_get_link_addr(iface);
+
+		if (mac != NULL && mac->len >= 6) {
+			printk("net: MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+			       mac->addr[0], mac->addr[1], mac->addr[2],
+			       mac->addr[3], mac->addr[4], mac->addr[5]);
+		}
+	}
+
 	for (;;) {
 		struct in_addr *addr =
 			net_if_ipv4_get_global_addr(iface, NET_ADDR_ANY_STATE);
