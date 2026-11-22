@@ -164,6 +164,20 @@ runners also exist on this board).
 3. Reset the board. The console (ST-LINK VCP, USART3 @115200) prints agent/address info.
    A blinking green LED (LD1) means "publishing".
 
+A healthy boot looks like this (the transport opens a socket for the ping and
+again for the session, hence the two lines):
+
+```
+*** Booting Zephyr OS build v4.1.0 ***
+net: MAC 00:80:e1:b4:e0:81
+net: ethernet@40028000 is 192.168.0.230
+micro-ROS UDP agent target 192.168.0.249:8888
+udp: socket 3 connected to 192.168.0.249:8888
+micro-ROS agent reachable, creating the node
+udp: socket 3 connected to 192.168.0.249:8888
+micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd
+```
+
 ## Downloading & flashing CI firmware (no local toolchain needed)
 
 Every run of the [CI workflow](https://github.com/mitselec/microros_nucleo_pi/actions/workflows/ci.yml)

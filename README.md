@@ -4,6 +4,8 @@
 
 Two projects that talk to each other over **UDP on your LAN**:
 
+> **Status:** verified end-to-end — Nucleo at `192.168.0.230` (Zephyr v4.1.0) ↔ Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` toggles the blue LED.
+
 ```mermaid
 flowchart LR
     subgraph PI["Raspberry Pi 3B+ (ROS 2 side)"]

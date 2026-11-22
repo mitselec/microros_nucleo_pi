@@ -129,9 +129,6 @@ static void wait_for_ipv4(void)
 		k_msleep(100);
 	}
 
-	printk("net: waiting for an IPv4 address on %s\n",
-	       net_if_get_device(iface)->name);
-
 	{
 		struct net_linkaddr *mac = net_if_get_link_addr(iface);
 
@@ -155,8 +152,11 @@ static void wait_for_ipv4(void)
 			return;
 		}
 
-		/* Distinguish "no cable" from "DHCP did not answer". */
-		if (elapsed % 2 == 0) {
+		/* Distinguish "no cable" from "the address was never assigned". */
+		if (elapsed == 0) {
+			printk("net: waiting for an IPv4 address on %s\n",
+			       net_if_get_device(iface)->name);
+		} else if (elapsed % 2 == 0) {
 			printk("net: no IPv4 yet (%us): carrier %s, iface %s\n",
 			       elapsed,
 			       net_if_is_carrier_ok(iface) ? "up" : "DOWN",
