@@ -42,7 +42,7 @@
 	{                                                                          \
 		rcl_ret_t temp_rc = fn;                                                \
 		if ((temp_rc != RCL_RET_OK)) {                                         \
-			printf("micro-ROS failure at line %d: %d. Aborting.\n",            \
+			printk("micro-ROS failure at line %d: %d. Aborting.\n",            \
 			       __LINE__, (int)temp_rc);                                    \
 			for (;;) {                                                         \
 				;                                                              \
@@ -54,7 +54,7 @@
 	{                                                                          \
 		rcl_ret_t temp_rc = fn;                                                \
 		if ((temp_rc != RCL_RET_OK)) {                                         \
-			printf("micro-ROS soft failure at line %d: %d. Continuing.\n",     \
+			printk("micro-ROS soft failure at line %d: %d. Continuing.\n",     \
 			       __LINE__, (int)temp_rc);                                    \
 		}                                                                      \
 	}
@@ -116,9 +116,9 @@ static int leds_init(void)
 }
 
 /*
- * Wait until the Ethernet interface has an IPv4 address. Pinging before DHCP
- * completes only produces failed socket opens (and, in the stock module
- * transport, leaked file descriptors).
+ * Wait until the Ethernet interface has an IPv4 address. Pinging before the
+ * address is assigned only produces failed socket opens (and, in the stock
+ * module transport, leaked file descriptors).
  */
 static void wait_for_ipv4(void)
 {
@@ -174,7 +174,7 @@ int main(void)
 
 	ret = leds_init();
 	if (ret < 0) {
-		printf("LED init failed (%d), continuing without LEDs\n", ret);
+		printk("LED init failed (%d), continuing without LEDs\n", ret);
 	}
 
 	wait_for_ipv4();
@@ -203,14 +203,14 @@ int main(void)
 	while (rmw_uros_ping_agent(1000, 1) != RMW_RET_OK) {
 		attempts++;
 		if (attempts <= 10 || attempts % 5 == 0) {
-			printf("Waiting for the micro-ROS agent (%s:%s), attempt %d...\n",
+			printk("Waiting for the micro-ROS agent (%s:%s), attempt %d...\n",
 			       CONFIG_MICROROS_AGENT_IP,
 			       CONFIG_MICROROS_AGENT_PORT,
 			       attempts);
 		}
 		k_msleep(1000);
 	}
-	printf("micro-ROS agent reachable, creating the node\n");
+	printk("micro-ROS agent reachable, creating the node\n");
 
 	rcl_allocator_t allocator = rcl_get_default_allocator();
 	rclc_support_t support;
@@ -255,7 +255,7 @@ int main(void)
 
 	heartbeat_msg.data = 0;
 
-	printf("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
+	printk("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
 	while (1) {
 		rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
 		k_msleep(10);

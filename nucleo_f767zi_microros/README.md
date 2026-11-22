@@ -7,7 +7,9 @@ micro-ROS node over the board's **integrated Ethernet, using UDP transport**.
 - Subscribes to `std_msgs/msg/Bool` on `/zephyr_led_cmd` (blue user LED toggles on each message).
 - Waits for the micro-ROS agent at `CONFIG_MICROROS_AGENT_IP:CONFIG_MICROROS_AGENT_PORT`
   and retries until it is reachable.
-- Gets its IP address via DHCP.
+- Uses a **static IPv4 address** (`CONFIG_NET_CONFIG_MY_IPV4_ADDR`, default
+  `192.168.0.230`) so the demo does not depend on the router's DHCP server; DHCP
+  can be enabled instead with one line in `prj.conf`.
 
 ## Repository layout
 
@@ -41,12 +43,12 @@ shim is still needed 🙂.
 
 The module's `microros_transports/udp` implementation is not exercised by
 upstream CI (which builds the serial transports only) and has two problems that
-show up on a DHCP network:
+show up on a real network:
 
 1. It resolves the agent address with `getaddrinfo()`, which allocates memory
    and is unnecessary for a numeric IPv4 address.
-2. If `socket()` succeeds but `connect()` fails (normal during boot, before
-   DHCP assigns an address), it returns `false` **without closing the socket**.
+2. If `socket()` succeeds but `connect()` fails (normal during boot, before the
+   interface has an address), it returns `false` **without closing the socket**.
    `rmw_uros_ping_agent()` retries in a loop, so the leaked descriptors
    accumulate until `socket()` fails permanently: the board then never sends a
    single UDP packet, even though ICMP ping still works.
@@ -54,8 +56,8 @@ show up on a DHCP network:
 `src/udp_transport.c` replaces it with a small transport that parses the
 address with `zsock_inet_pton()`, closes the socket on every failure path, and
 prints the reason (`udp: connect() ... failed (errno N)`). `main.c` also waits
-for DHCP before the first ping. The module's transport library is still built
-because the Kconfig choice selects it, but the app no longer uses it.
+for an IPv4 address before the first ping. The module's transport library is
+still built because the Kconfig choice selects it, but the app no longer uses it.
 
 ## Zephyr version compatibility
 
@@ -77,8 +79,16 @@ CONFIG_MICROROS_AGENT_IP="192.168.1.100"   # <- your Raspberry Pi IP
 CONFIG_MICROROS_AGENT_PORT="8888"          # <- the UDP port the agent listens on
 ```
 
-The board obtains its own address by DHCP. For a static address instead, replace
-`CONFIG_NET_DHCPV4=y` with the static-IP block in the Networking section of `prj.conf`.
+The board uses a **static address** by default (`192.168.0.230`, see the Networking
+section of `prj.conf`). Pick an address that is free on your LAN and outside your
+router's DHCP pool, and make sure it is in the same subnet as the Pi. To use DHCP
+instead, comment out the `CONFIG_NET_CONFIG_*` lines and uncomment `CONFIG_NET_DHCPV4=y`.
+
+Why static: on a busy home LAN the router can keep offering the address the board
+had last time, which another device has taken meanwhile. Zephyr's DHCP client runs
+IPv4 address-conflict detection, declines the offer and retries, and on some routers
+that loop never ends — the console then shows `net: no IPv4 yet (Ns)` forever while
+the link itself is perfectly fine.
 
 ## Building (WSL2 on Windows is recommended)
 
@@ -136,8 +146,13 @@ west build -b nucleo_f767zi -p always . -- \
 easiest mix on Windows: build in WSL, flash from Windows with STM32CubeProgrammer CLI:
 
 ```powershell
-STM32_Programmer_CLI -c port=SWD mode=NORMAL -w D:\Programming\ROS2\nucleo_f767zi_microros\build\zephyr\zephyr.hex -v -g
+STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -w D:\Programming\ROS2\nucleo_f767zi_microros\build\zephyr\zephyr.hex -v -g
 ```
+
+Use `mode=UR reset=HWrst` (connect under reset). Plain `mode=NORMAL` fails on some
+Nucleo boards with `Error: Unable to read device id from ROM table`
+(`ST-LINK error (DEV_CONNECT_ERR)`), because the running firmware keeps the debug
+port busy.
 
 (or install STM32CubeProgrammer inside WSL2 and just run `west flash`; OpenOCD/J-Link
 runners also exist on this board).
@@ -158,7 +173,7 @@ builds the firmware and attaches it as an artifact:
 2. Scroll to **Artifacts** and download `nucleo_f767zi-microros-firmware`, unzip it.
 3. Flash over the board's ST-LINK USB with STM32CubeProgrammer:
    ```powershell
-   STM32_Programmer_CLI -c port=SWD mode=NORMAL -w zephyr.hex -v -g
+   STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -w zephyr.hex -v -g
    ```
    or via the GUI: Connect (SWD) -> Open File -> `zephyr.hex` -> Download.
 
@@ -195,6 +210,19 @@ CONFIG_MICROROS_SERIAL_PORT="1"        # see module Kconfig; "2" = USART6 on the
 and run the agent with `serial --dev <tty>` instead of `udp4`. Note: with serial, `micro-ROS`
 framing is required (the Zephyr module's serial transports handle this via
 `MICRO_ROS_FRAMING_REQUIRED`).
+
+## Troubleshooting (symptoms seen in practice)
+
+| Console / symptom | Cause | Fix |
+|---|---|---|
+| `net: no IPv4 yet (Ns): carrier up, iface up` repeating forever | Link is fine, no usable DHCP lease (often an address-conflict loop on the router) | Use the static-IP block in `prj.conf`, or give the router a reservation for the board's MAC |
+| `net: no IPv4 yet (...): carrier DOWN` | No link: cable, switch port, or PHY | Try another cable/port; check the RJ45 LEDs |
+| `Waiting for the micro-ROS agent (IP:PORT), attempt N...` forever | Agent not running, wrong IP/port baked into the firmware, or firewall | `docker ps`/`docker logs microros-agent` on the Pi; make sure `CONFIG_MICROROS_AGENT_IP` matches `hostname -I` on the Pi |
+| `udp: connect() to ... failed (errno N)` | No route yet (interface has no address) | The app waits for the address first; if it persists, check the subnet/netmask |
+| PC cannot ping the board right after flashing (`Destination host unreachable`) | ARP not resolved yet while the board is still booting | Wait a few seconds and retry; `arp -a` should then show the board's MAC |
+
+The board prints its MAC at boot (`net: MAC ...`), which is handy when checking the
+router's client list.
 
 ## Known limitations
 

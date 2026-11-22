@@ -21,7 +21,7 @@ flowchart LR
 
 | Folder | What it is |
 |---|---|
-| `nucleo_f767zi_microros/` | Zephyr application + west manifest. Builds `micro_ros_zephyr_module`, uses the **UDP transport** over the board's built-in Ethernet with DHCP. |
+| `nucleo_f767zi_microros/` | Zephyr application + west manifest. Builds `micro_ros_zephyr_module`, uses the **UDP transport** over the board's built-in Ethernet with a static IP (`192.168.0.230` by default). |
 | `raspberry_pi_agent/` | ROS 2 side: the micro-ROS **agent** as a Docker service + instructions to inspect/drive topics with ros2 CLI. |
 | `.github/workflows/ci.yml` | GitHub Actions build of the Zephyr firmware on every push/PR; the flashed-ready `.hex/.bin/.elf` come out as a downloadable artifact. |
 
@@ -36,7 +36,7 @@ flowchart LR
 
 1. Flash/prepare the Pi agents: see `raspberry_pi_agent/README.md` (Docker agent on `0.0.0.0:8888`).
 2. Find the Pi's IP (`hostname -I` on the Pi) and put it in `nucleo_f767zi_microros/prj.conf` as `CONFIG_MICROROS_AGENT_IP="..."`.
-3. Build + flash the Nucleo: see `nucleo_f767zi_microros/README.md` (build in WSL2, flash with STM32CubeProgrammer).
+3. Build + flash the Nucleo: see `nucleo_f767zi_microros/README.md` (build in WSL2, flash with STM32CubeProgrammer). The board comes up at a **static** `192.168.0.230` (set in `prj.conf`) — change it to a free address in the Pi's subnet if that one is taken.
 4. Plug both into the same switch/router. On the Pi (the agent image has no `ros2` CLI, so use a separate container):
    ```bash
    docker run --rm --network host ros:humble \
