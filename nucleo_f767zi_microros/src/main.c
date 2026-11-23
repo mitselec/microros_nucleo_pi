@@ -88,8 +88,11 @@ static void led_cmd_subscription_callback(const void *msgin)
 {
 	const std_msgs__msg__Bool *msg = (const std_msgs__msg__Bool *)msgin;
 
-	ARG_UNUSED(msg); /* every received message toggles the LED */
-	gpio_pin_toggle_dt(&led_command);
+	/* Level command, not a toggle: "true" turns the LED on, "false" off.
+	 * Idempotent, so publishing the command several times (or retrying
+	 * because a DDS discovery race ate the first sample) is harmless.
+	 */
+	gpio_pin_set_dt(&led_command, msg->data ? 1 : 0);
 }
 
 static int leds_init(void)

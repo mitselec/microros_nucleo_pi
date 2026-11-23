@@ -75,12 +75,20 @@ docker run --rm --network host ros:humble \
 #   /parameters
 ```
 
-Blink the blue LED while watching the board:
+Switch the blue LED on and off while watching the board:
 
 ```bash
+# true = on, false = off (a short burst is harmless: the command is a level,
+# not a toggle, and it survives the DDS discovery delay of a fresh container)
 docker run --rm --network host ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: false}'"
 ```
+
+Each `docker run` is a brand-new DDS participant, so the agent needs a few seconds to
+discover it. `ros2 topic pub --once` can therefore be dropped before the match; the
+`-r 2 --times 5` form publishes over ~2.5 s and always gets through.
 
 > `osrf/ros:humble-desktop` is **amd64-only** and fails on the Pi with
 > `exec format error`. `ros:humble` is published for arm64 and works.

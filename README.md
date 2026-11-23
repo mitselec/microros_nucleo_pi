@@ -4,7 +4,7 @@
 
 Two projects that talk to each other over **UDP on your LAN**:
 
-> **Status:** verified end-to-end — Nucleo at `192.168.0.230` (Zephyr v4.1.0) ↔ Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` toggles the blue LED.
+> **Status:** verified end-to-end — Nucleo at `192.168.0.230` (Zephyr v4.1.0) ↔ Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
     end
 
     subgraph NUC["NUCLEO-F767ZI (Zephyr RTOS)"]
-        NODE["micro-ROS node<br/>publishes /zephyr_heartbeat (Int32)<br/>subscribes /zephyr_led_cmd (Bool)<br/>green LED blinks on each publish<br/>blue LED toggles on command"]
+        NODE["micro-ROS node<br/>publishes /zephyr_heartbeat (Int32)<br/>subscribes /zephyr_led_cmd (Bool)<br/>green LED blinks on each publish<br/>blue LED follows /zephyr_led_cmd (true = on)"]
     end
 
     AGENT <-->|UDP 8888<br/>over Ethernet, RJ45| NODE
@@ -32,7 +32,7 @@ flowchart LR
 | Topic | Type | Direction | Effect |
 |---|---|---|---|
 | `/zephyr_heartbeat` | `std_msgs/msg/Int32` | Nucleo -> Pi | Counter, published once per second; green LED (LD1, PB0) blinks on each publish |
-| `/zephyr_led_cmd` | `std_msgs/msg/Bool` | Pi -> Nucleo | Any received message toggles the blue LED (LD2, PB7) |
+| `/zephyr_led_cmd` | `std_msgs/msg/Bool` | Pi -> Nucleo | `true` turns the blue LED (LD2, PB7) on, `false` turns it off |
 
 ## Quick start
 
@@ -43,9 +43,17 @@ flowchart LR
    ```bash
    docker run --rm --network host ros:humble \
      bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /zephyr_heartbeat"
+
+   # blue LED on / off (a short burst makes it immune to DDS discovery races):
    docker run --rm --network host ros:humble \
-     bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+     bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+   docker run --rm --network host ros:humble \
+     bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: false}'"
    ```
+
+   Each of these containers is a **fresh DDS participant**: discovery with the agent takes a few
+   seconds, so a single `--once` publish can be dropped before the two sides have matched. The
+   command is a level (`true` = on), so publishing it several times is harmless.
 
 ## Hardware notes
 

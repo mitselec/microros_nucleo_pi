@@ -4,7 +4,7 @@ A Zephyr application (this folder is also a **west manifest repository**) that r
 micro-ROS node over the board's **integrated Ethernet, using UDP transport**.
 
 - Publishes `std_msgs/msg/Int32` on `/zephyr_heartbeat` every 1000 ms (green user LED blinks).
-- Subscribes to `std_msgs/msg/Bool` on `/zephyr_led_cmd` (blue user LED toggles on each message).
+- Subscribes to `std_msgs/msg/Bool` on `/zephyr_led_cmd` (`true` = blue user LED on, `false` = off).
 - Waits for the micro-ROS agent at `CONFIG_MICROROS_AGENT_IP:CONFIG_MICROROS_AGENT_PORT`
   and retries until it is reachable.
 - Uses a **static IPv4 address** (`CONFIG_NET_CONFIG_MY_IPV4_ADDR`, default
@@ -207,10 +207,16 @@ docker run --rm --network host ros:humble \
   bash -c "source /opt/ros/humble/setup.bash && ros2 topic list"
 # should show /zephyr_heartbeat and /zephyr_led_cmd
 
-# toggle the blue LED from the Pi:
+# blue LED on (true) / off (false). Publishing a few times is harmless and
+# avoids losing the command to a DDS discovery race:
 docker run --rm --network host ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
 ```
+
+Every `docker run` starts a **new DDS participant**, and the micro-ROS agent can take a few
+seconds to match it. A single `ros2 topic pub --once` may therefore be published into the void
+and exit before the match. That is why the command is a level (`true` = on) instead of a
+toggle: sending it repeatedly always converges to the same state.
 
 ## Serial transport fallback (optional)
 
