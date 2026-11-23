@@ -55,6 +55,21 @@ flowchart LR
    seconds, so a single `--once` publish can be dropped before the two sides have matched. The
    command is a level (`true` = on), so publishing it several times is harmless.
 
+## Releases
+
+Pushing a version tag builds the firmware and publishes it as a **GitHub Release**
+with `zephyr.hex`, `zephyr.bin` and `zephyr.elf` attached:
+
+```bash
+git tag -a v1.0.0 -m "First working demo"
+git push origin v1.0.0
+```
+
+The release body contains the flashing command, and the binaries stay available
+permanently — unlike workflow artifacts, which GitHub deletes after 90 days.
+Re-running the workflow for an existing tag re-uploads the assets instead of
+failing.
+
 ## Hardware notes
 
 - **Ethernet**: the Nucleo-144 F767ZI has an onboard RJ45 with PHY (RMII). Connect it to the same LAN as the Pi. PA7 (crs_dv) is used by Ethernet - don't repurpose the Arduino SPI MOSI at the same time.

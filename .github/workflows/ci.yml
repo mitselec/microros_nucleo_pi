@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # Pushing a version tag (v1.2.3) builds the firmware and publishes it as a
+    # GitHub Release. Path filters are not applied to tag pushes.
+    tags: ['v*']
     # Only rebuild when something that actually goes into the firmware (or the
     # workflow itself) changes. Docs-only commits stay cheap: no CI run.
     paths:
@@ -80,3 +83,55 @@ jobs:
             build/zephyr/*.bin
             build/zephyr/*.elf
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    # Only for tag pushes, and only if the firmware actually built.
+    needs: build-firmware
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nucleo_f767zi-microros-firmware
+          path: dist
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # `gh` needs to know which repository to talk to: this job has no
+          # checkout, so there is no git remote to infer it from.
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Flashing instructions are part of the release body so the asset
+          # is usable without opening the repository.
+          cat > notes.md <<'EOF'
+          Firmware for the NUCLEO-F767ZI built by CI from this tag.
+
+          Flash over the board's ST-LINK USB port with STM32CubeProgrammer:
+
+          ```powershell
+          STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -w zephyr.hex -v -g
+          ```
+
+          `mode=UR reset=HWrst` (connect under reset) is required on boards
+          where the plain `mode=NORMAL` connection fails with
+          `ST-LINK error (DEV_CONNECT_ERR)`.
+
+          See the repository README for the Raspberry Pi agent setup.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; uploading assets."
+            gh release upload "$TAG" dist/zephyr.hex dist/zephyr.bin dist/zephyr.elf --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file notes.md \
+              dist/zephyr.hex dist/zephyr.bin dist/zephyr.elf
+          fi
