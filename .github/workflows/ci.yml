@@ -3,7 +3,17 @@ name: CI
 on:
   push:
     branches: [main]
+    # Only rebuild when something that actually goes into the firmware (or the
+    # workflow itself) changes. Docs-only commits stay cheap: no CI run.
+    paths:
+      - 'nucleo_f767zi_microros/**'
+      - '!nucleo_f767zi_microros/**/*.md'
+      - '.github/workflows/ci.yml'
   pull_request:
+    paths:
+      - 'nucleo_f767zi_microros/**'
+      - '!nucleo_f767zi_microros/**/*.md'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 concurrency:
