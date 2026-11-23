@@ -65,14 +65,23 @@ Pushing a version tag builds the firmware and publishes it as a **GitHub Release
 with `zephyr.hex`, `zephyr.bin` and `zephyr.elf` attached:
 
 ```bash
-git tag -a v1.0.0 -m "First working demo"
-git push origin v1.0.0
+# 1. describe the changes in CHANGELOG.md under "## [1.1.0] - YYYY-MM-DD"
+git add CHANGELOG.md && git commit -m "docs: changelog for 1.1.0"
+git push
+
+# 2. tag the commit you want to ship
+git tag -a v1.1.0 -m "Short summary"
+git push origin v1.1.0
 ```
 
-The release body contains the flashing command, and the binaries stay available
-permanently — unlike workflow artifacts, which GitHub deletes after 90 days.
-Re-running the workflow for an existing tag re-uploads the assets instead of
-failing.
+The release body is the matching `CHANGELOG.md` section (the one whose heading
+is `## [1.1.0]`) followed by the flashing command, so each release describes its
+own features. The tag annotation is only a short summary; the changelog is what
+ends up on the release page.
+
+The binaries stay available permanently — unlike workflow artifacts, which
+GitHub deletes after 90 days. Re-running the workflow for an existing tag
+updates the notes and re-uploads the assets instead of failing.
 
 ## Hardware notes
 

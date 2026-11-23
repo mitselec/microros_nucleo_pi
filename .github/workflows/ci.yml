@@ -104,6 +104,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout (for CHANGELOG.md)
+        uses: actions/checkout@v4
+
       - name: Download firmware artifact
         uses: actions/download-artifact@v4
         with:
@@ -113,18 +116,38 @@ jobs:
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
-          # `gh` needs to know which repository to talk to: this job has no
-          # checkout, so there is no git remote to infer it from.
+          # `gh` needs to know which repository to talk to.
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          # Flashing instructions are part of the release body so the asset
-          # is usable without opening the repository.
-          cat > notes.md <<'EOF'
-          Firmware for the NUCLEO-F767ZI built by CI from this tag.
 
-          Flash over the board's ST-LINK USB port with STM32CubeProgrammer:
+          # Release notes: the CHANGELOG section whose heading matches the tag,
+          # e.g. "## [1.0.1] - 2026-11-23" for tag v1.0.1.
+          version="${TAG#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { found = 1; next }
+            found && /^## \[/       { exit }
+            found                   { print }
+          ' CHANGELOG.md > notes.md
+
+          if [ -s notes.md ]; then
+            # Drop a possible blank line left over from the heading.
+            sed -i '/./,$!d' notes.md
+          else
+            echo "Firmware for the NUCLEO-F767ZI built by CI from \`$TAG\`." > notes.md
+          fi
+
+          # Flashing instructions are part of the release body so the asset is
+          # usable without opening the repository.
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          ### Flashing
+
+          Download `zephyr.hex` below and flash it over the board's ST-LINK USB
+          port with STM32CubeProgrammer:
 
           ```powershell
           STM32_Programmer_CLI -c port=SWD mode=UR reset=HWrst -w zephyr.hex -v -g
@@ -134,11 +157,13 @@ jobs:
           where the plain `mode=NORMAL` connection fails with
           `ST-LINK error (DEV_CONNECT_ERR)`.
 
-          See the repository README for the Raspberry Pi agent setup.
+          The Pi side is unchanged: see the repository README for the
+          micro-ROS agent setup.
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading assets."
+            echo "Release $TAG already exists; updating notes and assets."
+            gh release edit "$TAG" --notes-file notes.md
             gh release upload "$TAG" dist/zephyr.hex dist/zephyr.bin dist/zephyr.elf --clobber
           else
             gh release create "$TAG" \
