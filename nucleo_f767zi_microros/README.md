@@ -237,12 +237,20 @@ framing is required (the Zephyr module's serial transports handle this via
 |---|---|---|
 | `net: no IPv4 yet (Ns): carrier up, iface up` repeating forever | Link is fine, no usable DHCP lease (often an address-conflict loop on the router) | Use the static-IP block in `prj.conf`, or give the router a reservation for the board's MAC |
 | `net: no IPv4 yet (...): carrier DOWN` | No link: cable, switch port, or PHY | Try another cable/port; check the RJ45 LEDs |
-| `Waiting for the micro-ROS agent (IP:PORT), attempt N...` forever | Agent not running, wrong IP/port baked into the firmware, or firewall | `docker ps`/`docker logs microros-agent` on the Pi; make sure `CONFIG_MICROROS_AGENT_IP` matches `hostname -I` on the Pi |
+| `Waiting for the micro-ROS agent (IP:PORT), attempt N...` forever | Agent not running, wrong IP/port baked into the firmware, a firewall, or a session the agent still holds for the previous boot | `docker ps`/`docker logs microros-agent` on the Pi; check that `CONFIG_MICROROS_AGENT_IP` matches `hostname -I`. Then press the board's **RESET** (the client connects at boot). If it still retries, `docker restart microros-agent` and reset again |
 | `udp: connect() to ... failed (errno N)` | No route yet (interface has no address) | The app waits for the address first; if it persists, check the subnet/netmask |
 | PC cannot ping the board right after flashing (`Destination host unreachable`) | ARP not resolved yet while the board is still booting | Wait a few seconds and retry; `arp -a` should then show the board's MAC |
 
 The board prints its MAC at boot (`net: MAC ...`), which is handy when checking the
 router's client list.
+
+### "I had to reset the board before it connected"
+
+The micro-ROS client creates its session at boot, so the usual order is: **start the
+agent, then reset the board**. In our tests a board that booted while the agent was
+already up sometimes kept retrying even though the agent answered XRCE pings from
+other hosts; restarting the agent and resetting the board always cleared it. The
+retry loop never gives up, so nothing has to be reflashed once the agent answers.
 
 ## Known limitations
 
