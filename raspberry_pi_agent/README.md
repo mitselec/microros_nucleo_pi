@@ -107,7 +107,7 @@ couple of milliseconds. The fix is to stop paying the setup cost per command.
 
 The board side was tightened as well. The main loop used to run
 `rclc_executor_spin_some(10 ms)` followed by `k_msleep(10)`, i.e. up to ~20 ms of extra
-delay between "sample arrived on the socket" and "callback toggled the LED". It now spins
+delay between "sample arrived on the socket" and "callback set the LED". It now spins
 with a 1 ms wait and a 1 ms sleep, so the callback runs within ~1-2 ms. That is noise next
 to the seconds spent in `docker run`, but it removes the last avoidable part.
 
@@ -115,7 +115,7 @@ to the seconds spent in `docker run`, but it removes the last avoidable part.
 a publisher that is already matched with the agent, and watches a file:
 
 ```bash
-cd ~/repositories/microros_nucleo_pi/microros_nucleo_pi/raspberry_pi_agent
+cd raspberry_pi_agent              # from the repository root
 docker compose up -d led-ctl
 docker logs -f led-ctl            # "watching /ctrl/led ..."
 
@@ -188,7 +188,7 @@ stalls:
 
 ```bash
 docker run --rm --network host --ipc=host ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
 ```
 
 > `osrf/ros:humble-desktop` is **amd64-only** and fails on the Pi with
