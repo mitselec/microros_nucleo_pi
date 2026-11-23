@@ -74,10 +74,13 @@ jobs:
       - name: Build firmware
         run: |
           # Bake the version into the binary so the boot log identifies the build.
+          # No `git` here: the Zephyr container runs as a different user than the
+          # checkout, and git refuses to read such a repository ("dubious
+          # ownership"). GITHUB_SHA is already the commit being built.
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             APP_VERSION="${GITHUB_REF_NAME}"
           else
-            APP_VERSION="${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)"
+            APP_VERSION="${GITHUB_REF_NAME}-$(printf %s "$GITHUB_SHA" | cut -c1-7)"
           fi
           echo "Building $APP_VERSION"
           west build -b nucleo_f767zi -p always nucleo_f767zi_microros -- -DAPP_VERSION="$APP_VERSION"
