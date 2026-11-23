@@ -87,12 +87,23 @@ static void heartbeat_timer_callback(rcl_timer_t *timer, int64_t last_call_time)
 static void led_cmd_subscription_callback(const void *msgin)
 {
 	const std_msgs__msg__Bool *msg = (const std_msgs__msg__Bool *)msgin;
+	static int last_state = -1;
 
 	/* Level command, not a toggle: "true" turns the LED on, "false" off.
 	 * Idempotent, so publishing the command several times (or retrying
 	 * because a DDS discovery race ate the first sample) is harmless.
 	 */
 	gpio_pin_set_dt(&led_command, msg->data ? 1 : 0);
+
+	/* Log only real changes: this is the moment the command took effect, so
+	 * the console timestamp shows whether a "slow" command was late on the
+	 * wire or late on the board.
+	 */
+	if ((int)msg->data != last_state) {
+		last_state = (int)msg->data;
+		printk("led_cmd: %s @ %lld ms\n",
+		       msg->data ? "on" : "off", k_uptime_get());
+	}
 }
 
 static int leds_init(void)
@@ -174,6 +185,8 @@ static void wait_for_ipv4(void)
 int main(void)
 {
 	int ret;
+
+	printk("\nmicro-ROS demo %s\n", APP_VERSION);
 
 	ret = leds_init();
 	if (ret < 0) {
@@ -259,9 +272,13 @@ int main(void)
 	heartbeat_msg.data = 0;
 
 	printk("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
+	/* Spin with a 1 ms wait instead of 10 ms + k_msleep(10): a command is
+	 * then handed to the subscription callback within ~1-2 ms of arriving on
+	 * the socket. The 216 MHz M7 has plenty of headroom for the extra polls.
+	 */
 	while (1) {
-		rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
-		k_msleep(10);
+		rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
+		k_msleep(1);
 	}
 
 	/* free unused resources (not reached in this demo) */

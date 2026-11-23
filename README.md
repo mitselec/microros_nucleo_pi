@@ -55,6 +55,10 @@ flowchart LR
    seconds, so a single `--once` publish can be dropped before the two sides have matched. The
    command is a level (`true` = on), so publishing it several times is harmless.
 
+   For interactive use, skip the per-command startup cost entirely: the optional `led-ctl`
+   service keeps a matched publisher alive and reacts to a file in tens of milliseconds —
+   `echo true > ctrl/led`. See [Low-latency control](raspberry_pi_agent/README.md#5-low-latency-control-sub-100-ms).
+
 ## Releases
 
 Pushing a version tag builds the firmware and publishes it as a **GitHub Release**

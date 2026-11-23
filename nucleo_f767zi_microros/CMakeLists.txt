@@ -14,6 +14,12 @@ list(APPEND ZEPHYR_EXTRA_MODULES
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(microros_nucleo_f767zi)
 
+# Version string printed on the console at boot. CI passes the tag name (or
+# "main-<sha>") with -DAPP_VERSION=..., so the firmware can be identified from
+# the serial log alone.
+set(APP_VERSION "dev" CACHE STRING "Firmware version string")
+target_compile_definitions(app PRIVATE APP_VERSION="${APP_VERSION}")
+
 target_sources(app PRIVATE
   src/main.c
   src/udp_transport.c

@@ -90,6 +90,107 @@ Each `docker run` is a brand-new DDS participant, so the agent needs a few secon
 discover it. `ros2 topic pub --once` can therefore be dropped before the match; the
 `-r 2 --times 5` form publishes over ~2.5 s and always gets through.
 
+## 5. Low-latency control (sub-100 ms)
+
+The commands above are fine for checking that everything works, but every one of them
+pays the same fixed cost before the board hears anything:
+
+| Step | Cost on a Pi 3B+ |
+|---|---|
+| `docker run` (container create/start) | ~0.5-1 s |
+| Python + `ros2` CLI import | ~2-4 s |
+| New DDS participant, agent must discover it | ~0.2-1 s |
+| `--once`/`--times` waits for that match | up to seconds |
+
+None of that is the board: once the message reaches the agent, the firmware reacts in a
+couple of milliseconds. The fix is to stop paying the setup cost per command.
+
+The board side was tightened as well. The main loop used to run
+`rclc_executor_spin_some(10 ms)` followed by `k_msleep(10)`, i.e. up to ~20 ms of extra
+delay between "sample arrived on the socket" and "callback toggled the LED". It now spins
+with a 1 ms wait and a 1 ms sleep, so the callback runs within ~1-2 ms. That is noise next
+to the seconds spent in `docker run`, but it removes the last avoidable part.
+
+`docker-compose.yml` includes an optional `led-ctl` service that starts **once**, keeps
+a publisher that is already matched with the agent, and watches a file:
+
+```bash
+cd ~/repositories/microros_nucleo_pi/microros_nucleo_pi/raspberry_pi_agent
+docker compose up -d led-ctl
+docker logs -f led-ctl            # "watching /ctrl/led ..."
+
+echo true  > ctrl/led             # blue LED on  (~tens of ms)
+echo false > ctrl/led             # blue LED off
+```
+
+The value is re-published every 2 s, so the LED also converges after a board reset
+without you resending anything. Accepted words: `true/false`, `on/off`, `1/0`.
+
+### Would Cyclone DDS help?
+
+Short answer: not on the agent side, and only marginally on the client side.
+
+- The micro-ROS agent image is built against **Fast DDS**. Its source has exactly two
+  middleware backends, `fastdds` and a test backend (`ced`); there is no Cyclone build, so
+  the board always talks to a Fast DDS participant.
+- What you *can* switch is the ROS 2 process on the Pi (the `ros2` CLI, or `led-ctl`) with
+  `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`. It then interoperates with the agent over RTPS:
+  cross-vendor interop is standard, but discovery is slower and less forgiving than
+  same-vendor, so it is a change to test, not a guaranteed improvement.
+- The gain is small because DDS is not where the seconds go: starting a container (~1 s)
+  and starting Python + rclpy (~2-4 s on a Pi 3B+) dominate. Cyclone's participant startup
+  is somewhat lighter than Fast DDS's, so expect a few hundred milliseconds at best.
+- With `led-ctl` the participant is created once at `docker compose up`, so the vendor
+  hardly matters: publishing the sample takes milliseconds either way.
+- Side effect: Cyclone does not emit the Fast DDS `sequence size exceeds remaining buffer`
+  warnings, because those come from the Fast DDS 2.6 CLI talking to the newer Fast DDS in
+  the agent.
+
+Measure before changing anything — these three commands tell you where the time goes:
+
+```bash
+# floor: container start only
+time docker run --rm --network host ros:humble true
+
+# floor: Python + rclpy import (no DDS participant yet)
+time docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && python3 -c 'import rclpy'"
+
+# the led-ctl path (persistent publisher, no per-command startup)
+time bash -c 'echo true > ctrl/led'
+```
+
+If Cyclone is in the image (empty output means it is not):
+
+```bash
+docker run --rm ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 pkg list | grep rmw_cyclonedds"
+```
+
+then run the same publish with and without it and compare:
+
+```bash
+time docker run --rm --network host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+
+time docker run --rm --network host -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: false}'"
+```
+
+To use it permanently for `led-ctl`, uncomment the `RMW_IMPLEMENTATION` line in
+`docker-compose.yml` (install `ros-humble-rmw-cyclonedds-cpp` first if the check above came
+back empty).
+
+If you prefer to keep the `ros2` CLI, add `--ipc=host` (the compose file already sets
+`ipc: host` for the agent) so Fast DDS can use shared memory instead of falling back to
+UDP. It does not remove the Python/container startup cost, but it removes the discovery
+stalls:
+
+```bash
+docker run --rm --network host --ipc=host ros:humble \
+  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub --once /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
+```
+
 > `osrf/ros:humble-desktop` is **amd64-only** and fails on the Pi with
 > `exec format error`. `ros:humble` is published for arm64 and works.
 > The first pull is ~700 MB, so give the Pi a few minutes.
@@ -97,7 +198,7 @@ discover it. `ros2 topic pub --once` can therefore be dropped before the match; 
 > The Pi CPU is slow - first pulls/runs take a while, `ros2 topic pub -r 10` is plenty
 > for demos (leave `-r` default of 1 Hz for the LED command).
 
-## 5. Notes & troubleshooting
+## 6. Notes & troubleshooting
 
 - **ROS_DOMAIN_ID** must match on both ends (default `0`). If you change it, export
   `ROS_DOMAIN_ID=<id>` in the agent service (`environment:` in docker-compose) and in
@@ -117,5 +218,8 @@ discover it. `ros2 topic pub --once` can therefore be dropped before the match; 
   transport (see the Nucleo README). UDP is the default here - it needs no USB cable.
 - **After reboots**: the compose service has `restart: unless-stopped`, so the agent
   comes back automatically. The Nucleo retries pinging until the agent is there.
-- **RMW**: default Fast DDS everywhere in this setup; don't mix in a Cyclone DDS-only
-  config unless you set `RMW_IMPLEMENTATION` consistently.
+- **RMW**: the agent is Fast DDS (the image has no Cyclone backend). The `ros2` CLI and
+  `led-ctl` default to Fast DDS too; switching only those to Cyclone
+  (`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`) is possible but works over cross-vendor RTPS —
+  see section 5. Don't mix RMW settings *between* the CLI containers and the agent without
+  testing, and keep `ROS_DOMAIN_ID` identical.

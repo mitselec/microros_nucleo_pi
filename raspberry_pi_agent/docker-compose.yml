@@ -5,6 +5,9 @@ services:
     # host networking: the agent listens on 0.0.0.0:8888 and participates
     # directly in the ROS 2 graph (DDS discovery via multicast)
     network_mode: host
+    # share /dev/shm with the host so Fast DDS can use shared memory instead of
+    # falling back to UDP when talking to other containers on this machine
+    ipc: host
     # --privileged + /dev mount only needed if you later switch to a
     # serial/USB transport; harmless for UDP
     privileged: true
@@ -12,5 +15,29 @@ services:
       - /dev:/dev
     # UDP transport: talk UDP to any LAN client; the Nucleo Kconfig
     # (CONFIG_MICROROS_AGENT_IP/PORT) must point at this Pi's IP and port 8888
-    command: udp4 --port 8888 -v6
+    #
+    # -v4 = debug. `-v6` logs every XRCE packet through Docker's json-file
+    # driver, which costs real time on a Pi's SD card; use it only while
+    # diagnosing (docker compose up -d --force-recreate after editing).
+    command: udp4 --port 8888 -v4
+    restart: unless-stopped
+
+  # Optional: sub-100 ms LED control. See README "Low-latency control".
+  # `ros2 topic pub` in a fresh container takes seconds (container start,
+  # Python start, DDS discovery); this keeps one matched publisher alive.
+  led-ctl:
+    container_name: led-ctl
+    image: ros:humble
+    network_mode: host
+    ipc: host
+    environment:
+      LED_CTRL_FILE: /ctrl/led
+      # Optional: use Eclipse Cyclone DDS instead of the default Fast DDS.
+      # Only valid if the image contains it (check with:
+      #   ros2 pkg list | grep rmw_cyclonedds). See README section 5.
+      # RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+    volumes:
+      - ./led_ctl.py:/led_ctl.py:ro
+      - ./ctrl:/ctrl
+    command: bash -c "source /opt/ros/humble/setup.bash && python3 /led_ctl.py"
     restart: unless-stopped

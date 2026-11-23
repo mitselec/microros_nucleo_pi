@@ -30,6 +30,10 @@ modules/micro_ros_zephyr_module/modules/libmicroros/zephyr_toolchain.cmake
 .DS_Store
 Thumbs.db
 
+# --- LED control file written on the Pi (see raspberry_pi_agent/README.md) ---
+raspberry_pi_agent/ctrl/*
+!raspberry_pi_agent/ctrl/.gitkeep
+
 # --- Python caches (colcon/west helpers) ---
 __pycache__/
 *.pyc

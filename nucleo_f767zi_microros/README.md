@@ -169,6 +169,7 @@ again for the session, hence the two lines):
 
 ```
 *** Booting Zephyr OS build v4.1.0 ***
+micro-ROS demo v1.0.0
 net: MAC 00:80:e1:b4:e0:81
 net: ethernet@40028000 is 192.168.0.230
 micro-ROS UDP agent target 192.168.0.249:8888
@@ -177,6 +178,24 @@ micro-ROS agent reachable, creating the node
 udp: socket 3 connected to 192.168.0.249:8888
 micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd
 ```
+
+The `micro-ROS demo <version>` line is baked in at build time: CI passes the tag name
+(`v1.0.0`) for tagged builds and `main-<sha>` for branch builds, so you can tell which
+binary is on the board from the serial log alone. A local build without `-DAPP_VERSION`
+prints `dev`.
+
+Every LED command that changes the state is echoed with the board's uptime:
+
+```
+led_cmd: on @ 41230 ms
+```
+
+That timestamp is when the message was processed, not when you typed the command. If the
+line appears immediately but the LED does not, the problem is elsewhere (it cannot be: the
+GPIO write happens before the print). If the line appears seconds later, the delay is on
+the Pi/network side, not in the firmware — the executor waits only 1 ms
+(`rclc_executor_spin_some(1 ms)` + `k_msleep(1)`), so a received sample is handled within
+~2 ms.
 
 ## Downloading & flashing CI firmware (no local toolchain needed)
 
