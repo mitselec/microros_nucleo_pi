@@ -242,7 +242,7 @@ CONFIG_MICROROS_SERIAL_PORT="1"        # see module Kconfig; "2" = USART6 on the
 and run the agent with `serial --dev <tty>` instead of `udp4`. Serial needs XRCE
 framing; the module's serial transports handle it via `MICRO_ROS_FRAMING_REQUIRED`.
 
-## Troubleshooting (symptoms seen in practice)
+## Troubleshooting
 
 | Console / symptom | Cause | Fix |
 |---|---|---|

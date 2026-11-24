@@ -4,7 +4,7 @@
 
 Two parts, connected over **UDP on the LAN**:
 
-> **Status:** verified end-to-end — Nucleo at `192.168.0.230` (Zephyr v4.1.0) ↔ Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off.
+> **Status:** verified end-to-end. Nucleo at `192.168.0.230` (Zephyr v4.1.0), Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off.
 
 ```mermaid
 flowchart LR
@@ -38,7 +38,7 @@ flowchart LR
 
 1. Flash/prepare the Pi agents: see `raspberry_pi_agent/README.md` (Docker agent on `0.0.0.0:8888`).
 2. Find the Pi's IP (`hostname -I` on the Pi) and put it in `nucleo_f767zi_microros/prj.conf` as `CONFIG_MICROROS_AGENT_IP="..."`.
-3. Build + flash the Nucleo: see `nucleo_f767zi_microros/README.md` (build in WSL2, flash with STM32CubeProgrammer). The board comes up at a **static** `192.168.0.230` (set in `prj.conf`) — change it to a free address in the Pi's subnet if that one is taken.
+3. Build + flash the Nucleo: see `nucleo_f767zi_microros/README.md` (build in WSL2, flash with STM32CubeProgrammer). The board comes up at a **static** `192.168.0.230` (set in `prj.conf`); change it to a free address in the Pi's subnet if that one is taken.
 4. Plug both into the same switch/router. On the Pi (the agent image has no `ros2` CLI, so use a separate container):
    ```bash
    docker run --rm --network host ros:humble \

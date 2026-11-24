@@ -7,6 +7,8 @@ before pushing the tag; without one, the release falls back to a generic descrip
 
 ## [1.0.1] - 2026-11-23
 
+Faster LED commands, and a version stamp in the boot log.
+
 ### Added
 
 - Boot banner: `micro-ROS demo v1.0.1`. CI passes the tag name (or `main-<sha>`) as

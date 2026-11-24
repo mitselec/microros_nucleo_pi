@@ -89,7 +89,7 @@ repeating it is harmless.
 
 ## 5. Low-latency control
 
-Every `docker run` above costs the same before the board sees anything:
+Before the board sees anything, each `docker run` above pays for the same startup:
 
 | Step | Pi 3B+ |
 |---|---|
@@ -122,49 +122,20 @@ between a sample arriving and the callback running.
 
 ### DDS implementation
 
-The agent is built against **Fast DDS**. The agent source has two middleware backends,
-`fastdds` and a test backend (`ced`), so there is no Cyclone build and the board always
-talks to Fast DDS.
+The agent only builds against Fast DDS (the source has a `fastdds` backend and an
+experimental `ced` one), so the board always talks to Fast DDS. That means Cyclone DDS
+can only be used on the CLI side, and switching is not worth it here: the delay is
+container and Python startup, which stays the same, and `led-ctl` creates its DDS
+participant once anyway. `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` works if you want to
+try it (install `ros-humble-rmw-cyclonedds-cpp` in the image first), and it does silence
+the `sequence size exceeds remaining buffer` warnings, which come from Fast DDS 2.6 in
+`ros:humble` talking to the newer Fast DDS in the agent.
 
-The `ros2` CLI and `led-ctl` use Fast DDS as well. They can be switched with
-`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp`, which then talks to the agent over RTPS.
-Cross-vendor interop works, but discovery is slower than same-vendor, and the gain is
-small: container and Python startup dominate, and `led-ctl` creates its participant only
-once. Cyclone does avoid the Fast DDS `sequence size exceeds remaining buffer` warnings,
-which come from Fast DDS 2.6 in `ros:humble` talking to the newer Fast DDS in the agent.
-
-Check whether the image ships it (no output means it does not):
-
-```bash
-docker run --rm ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 pkg list | grep rmw_cyclonedds"
-```
-
-To compare, run the same publish with and without the variable:
-
-```bash
-time docker run --rm --network host ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
-
-time docker run --rm --network host -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: false}'"
-```
-
-For `led-ctl`, uncomment `RMW_IMPLEMENTATION` in `docker-compose.yml` (install
-`ros-humble-rmw-cyclonedds-cpp` first if the check printed nothing).
-
-`--ipc=host` lets Fast DDS use shared memory between the containers instead of falling
-back to UDP. The compose file sets it for both services:
-
-```bash
-docker run --rm --network host --ipc=host ros:humble \
-  bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
-```
+`--ipc=host` (set in `docker-compose.yml` for both services) lets Fast DDS use shared
+memory between the containers instead of UDP.
 
 > `osrf/ros:humble-desktop` is amd64-only and fails on the Pi with `exec format error`.
 > `ros:humble` is published for arm64. The first pull is ~700 MB.
-
-> `ros2 topic pub -r 10` is plenty on the Pi; the LED command works at the default 1 Hz.
 
 ## 6. Notes & troubleshooting
 
