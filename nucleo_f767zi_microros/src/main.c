@@ -272,9 +272,9 @@ int main(void)
 	heartbeat_msg.data = 0;
 
 	printk("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
-	/* Spin with a 1 ms wait instead of 10 ms + k_msleep(10): a command is
-	 * then handed to the subscription callback within ~1-2 ms of arriving on
-	 * the socket. The 216 MHz M7 has plenty of headroom for the extra polls.
+	/* Spin with a 1 ms wait instead of 10 ms + k_msleep(10), so a command is
+	 * handed to the subscription callback within ~1-2 ms of arriving on the
+	 * socket.
 	 */
 	while (1) {
 		rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));

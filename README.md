@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mitselec/microros_nucleo_pi/actions/workflows/ci.yml/badge.svg)](https://github.com/mitselec/microros_nucleo_pi/actions/workflows/ci.yml)
 
-Two projects that talk to each other over **UDP on your LAN**:
+Two parts, connected over **UDP on the LAN**:
 
 > **Status:** verified end-to-end — Nucleo at `192.168.0.230` (Zephyr v4.1.0) ↔ Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off.
 
@@ -25,7 +25,7 @@ flowchart LR
 |---|---|
 | `nucleo_f767zi_microros/` | Zephyr application + west manifest. Builds `micro_ros_zephyr_module`, uses the **UDP transport** over the board's built-in Ethernet with a static IP (`192.168.0.230` by default). |
 | `raspberry_pi_agent/` | ROS 2 side: the micro-ROS **agent** as a Docker service + instructions to inspect/drive topics with ros2 CLI. |
-| `.github/workflows/ci.yml` | GitHub Actions build of the Zephyr firmware on every push/PR; the flashed-ready `.hex/.bin/.elf` come out as a downloadable artifact. |
+| `.github/workflows/ci.yml` | GitHub Actions build of the Zephyr firmware on every push/PR; `zephyr.hex/.bin/.elf` come out as a downloadable artifact. |
 
 ## Topics
 
@@ -44,20 +44,19 @@ flowchart LR
    docker run --rm --network host ros:humble \
      bash -c "source /opt/ros/humble/setup.bash && ros2 topic echo /zephyr_heartbeat"
 
-   # blue LED on / off (a short burst makes it immune to DDS discovery races):
+   # blue LED on / off (repeated publishes cover the discovery delay):
    docker run --rm --network host ros:humble \
      bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
    docker run --rm --network host ros:humble \
      bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: false}'"
    ```
 
-   Each of these containers is a **fresh DDS participant**: discovery with the agent takes a few
-   seconds, so a single `--once` publish can be dropped before the two sides have matched. The
-   command is a level (`true` = on), so publishing it several times is harmless.
+   Each container is a new DDS participant and the agent needs a moment to match it, so a
+   single `--once` publish can be lost. The command is a level, so repeating it is harmless.
 
-   For interactive use, skip the per-command startup cost entirely: the optional `led-ctl`
-   service keeps a matched publisher alive and reacts to a file in tens of milliseconds —
-   `echo true > ctrl/led`. See [Low-latency control](raspberry_pi_agent/README.md#5-low-latency-control-sub-100-ms).
+   For interactive use, the optional `led-ctl` service keeps a matched publisher alive and
+   reacts to a file: `echo true > ctrl/led`. See
+   [Low-latency control](raspberry_pi_agent/README.md#5-low-latency-control).
 
 ## Releases
 
@@ -74,14 +73,13 @@ git tag -a v1.1.0 -m "Short summary"
 git push origin v1.1.0
 ```
 
-The release body is the matching `CHANGELOG.md` section (the one whose heading
-is `## [1.1.0]`) followed by the flashing command, so each release describes its
-own features. The tag annotation is only a short summary; the changelog is what
-ends up on the release page.
+The release body is the matching `CHANGELOG.md` section (the one whose heading is
+`## [1.1.0]`) followed by the flashing command. The tag annotation is only a short
+summary; the changelog section is what appears on the release page.
 
-The binaries stay available permanently — unlike workflow artifacts, which
-GitHub deletes after 90 days. Re-running the workflow for an existing tag
-updates the notes and re-uploads the assets instead of failing.
+The binaries stay available permanently. Workflow artifacts are deleted by GitHub after
+90 days; release assets are not. Re-running the workflow for an existing tag updates the
+notes and re-uploads the assets instead of failing.
 
 ## Hardware notes
 

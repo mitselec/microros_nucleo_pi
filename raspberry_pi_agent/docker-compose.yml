@@ -16,15 +16,14 @@ services:
     # UDP transport: talk UDP to any LAN client; the Nucleo Kconfig
     # (CONFIG_MICROROS_AGENT_IP/PORT) must point at this Pi's IP and port 8888
     #
-    # -v4 = debug. `-v6` logs every XRCE packet through Docker's json-file
-    # driver, which costs real time on a Pi's SD card; use it only while
-    # diagnosing (docker compose up -d --force-recreate after editing).
+    # -v4 is the debug level. -v6 also logs every XRCE packet, which is slow on
+    # an SD card; use it only while diagnosing.
     command: udp4 --port 8888 -v4
     restart: unless-stopped
 
-  # Optional: sub-100 ms LED control. See README "Low-latency control".
-  # `ros2 topic pub` in a fresh container takes seconds (container start,
-  # Python start, DDS discovery); this keeps one matched publisher alive.
+  # Optional: LED control without a container start per command. See README
+  # "Low-latency control". Keeps one publisher matched with the agent and
+  # watches ctrl/led.
   led-ctl:
     container_name: led-ctl
     image: ros:humble

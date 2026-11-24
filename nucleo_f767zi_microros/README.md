@@ -36,8 +36,6 @@ its UDP transport code still uses the pre-Zephyr-3.4 header style
 `micro_ros_zephyr_module` branches (including `rolling`). The
 `microros_compat/` shim module restores compatibility on Zephyr >= 3.4 by
 adding `include/zephyr` to the include path - no module files are modified.
-Consider opening an issue/PR upstream if you read this in a year and the
-shim is still needed 🙂.
 
 ### Why the app ships its own UDP transport
 
@@ -63,12 +61,14 @@ still built because the Kconfig choice selects it, but the app no longer uses it
 
 | Zephyr version | Status | Notes |
 |---|---|---|
-| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`; this is the version verified in CI (`zephyrprojectrtos/zephyr-build:v0.26.17` container) and in the local WSL2 build flow. The `microros_compat/` shim is required for this version. |
-| v4.0.0 | Claimed, not tested for UDP | The micro-ROS module README claims v4.0.0 support, but its own CI only builds the **serial** transports. UDP header paths (`posix/sys/socket.h`) need the same shim treatment; untested on this combination. |
-| v4.2+ | **Known broken** | Upstream issue [#158](https://github.com/micro-ROS/micro_ros_zephyr_module/issues/158): Zephyr ≥4.2 moved POSIX APIs again (e.g. `zephyr/posix/time.h` → `zephyr/posix/sys/time.h`), breaking compilation for this app. Do not bump `west.yml` past v4.1.0 without re-testing. |
-| v3.x | Not supported | The UDP transport header targets Zephyr ≥3.2; pre-3.2 used a different header layout entirely (`zephyr/zephyr.h`, `include/posix/`). |
+| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`. Verified in CI (`zephyrprojectrtos/zephyr-build:v0.26.17`) and locally in WSL2. The `microros_compat/` shim is required. |
+| v4.0.0 | Claimed, not tested for UDP | The module README claims support, but its CI only builds the **serial** transports. UDP needs the same shim; untested here. |
+| v4.2+ | **Known broken** | Upstream issue [#158](https://github.com/micro-ROS/micro_ros_zephyr_module/issues/158): Zephyr ≥4.2 moved the POSIX headers again (`zephyr/posix/time.h` → `zephyr/posix/sys/time.h`) and this app does not compile. |
+| v3.x | Not supported | The transport targets Zephyr ≥3.2; earlier versions used a different header layout. |
 
-**Do not edit `west.yml`'s `revision: v4.1.0` unless you're prepared to fix the resulting header/API breakages.** If you bump Zephyr, start from CI's failed-run logs (`Actions` tab on GitHub) and expect to update `microros_compat/CMakeLists.txt` and possibly `modules/libmicroros/microros_transports/udp/*` include paths again.
+Do not change `west.yml`'s `revision: v4.1.0` without re-testing. A bump breaks the
+header paths above, and the fix belongs in `microros_compat/CMakeLists.txt` and the
+module's UDP transport includes.
 
 ## Configuring the agent address
 
@@ -84,11 +84,10 @@ section of `prj.conf`). Pick an address that is free on your LAN and outside you
 router's DHCP pool, and make sure it is in the same subnet as the Pi. To use DHCP
 instead, comment out the `CONFIG_NET_CONFIG_*` lines and uncomment `CONFIG_NET_DHCPV4=y`.
 
-Why static: on a busy home LAN the router can keep offering the address the board
-had last time, which another device has taken meanwhile. Zephyr's DHCP client runs
-IPv4 address-conflict detection, declines the offer and retries, and on some routers
-that loop never ends — the console then shows `net: no IPv4 yet (Ns)` forever while
-the link itself is perfectly fine.
+The static address avoids a DHCP failure mode: on a busy LAN the router can offer an
+address that another device has taken, Zephyr's IPv4 address-conflict detection declines
+it, and on some routers the retry loop never ends (`net: no IPv4 yet (Ns)` with the link
+up).
 
 ## Building (WSL2 on Windows is recommended)
 
@@ -180,9 +179,8 @@ micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cm
 ```
 
 The `micro-ROS demo <version>` line is baked in at build time: CI passes the tag name
-(`v1.0.0`) for tagged builds and `main-<sha>` for branch builds, so you can tell which
-binary is on the board from the serial log alone. A local build without `-DAPP_VERSION`
-prints `dev`.
+(`v1.0.0`) for tagged builds and `main-<sha>` for branch builds, so the serial log
+identifies the binary. A local build without `-DAPP_VERSION` prints `dev`.
 
 Every LED command that changes the state is echoed with the board's uptime:
 
@@ -190,10 +188,8 @@ Every LED command that changes the state is echoed with the board's uptime:
 led_cmd: on @ 41230 ms
 ```
 
-That timestamp is when the message was processed, not when you typed the command. If the
-line appears immediately but the LED does not, the problem is elsewhere (it cannot be: the
-GPIO write happens before the print). If the line appears seconds later, the delay is on
-the Pi/network side, not in the firmware — the executor waits only 1 ms
+The timestamp is when the callback ran. The GPIO write happens before the print, so a late
+line means the sample arrived late, not that the board was slow. The main loop waits 1 ms
 (`rclc_executor_spin_some(1 ms)` + `k_msleep(1)`), so a received sample is handled within
 ~2 ms.
 
@@ -213,8 +209,7 @@ builds the firmware and attaches it as an artifact:
 **Caveat:** `CONFIG_MICROROS_AGENT_IP` in `nucleo_f767zi_microros/prj.conf` is baked into
 the firmware at build time. CI builds use whatever that file contains in the repo - so if
 you flash repo artifacts, make sure your Pi's IP matches it (or commit your known IP
-there). The app tolerates a "wrong" agent gracefully: it keeps printing
-`Waiting for the micro-ROS agent...` and connects as soon as it answers.
+there). The app keeps retrying, so it connects as soon as the address answers.
 
 ## Test from the Pi
 
@@ -226,16 +221,14 @@ docker run --rm --network host ros:humble \
   bash -c "source /opt/ros/humble/setup.bash && ros2 topic list"
 # should show /zephyr_heartbeat and /zephyr_led_cmd
 
-# blue LED on (true) / off (false). Publishing a few times is harmless and
-# avoids losing the command to a DDS discovery race:
+# blue LED on (true) / off (false). Repeated publishes are harmless:
 docker run --rm --network host ros:humble \
   bash -c "source /opt/ros/humble/setup.bash && ros2 topic pub -r 2 --times 5 /zephyr_led_cmd std_msgs/msg/Bool '{data: true}'"
 ```
 
-Every `docker run` starts a **new DDS participant**, and the micro-ROS agent can take a few
-seconds to match it. A single `ros2 topic pub --once` may therefore be published into the void
-and exit before the match. That is why the command is a level (`true` = on) instead of a
-toggle: sending it repeatedly always converges to the same state.
+A new container is a new DDS participant and the agent needs a moment to match it, so a
+single `--once` publish can be lost. The command is a level (`true` = on), so repeating it
+is harmless.
 
 ## Serial transport fallback (optional)
 
@@ -246,9 +239,8 @@ CONFIG_MICROROS_TRANSPORT_SERIAL=y      # instead of UDP, also remove CONFIG_MIC
 CONFIG_MICROROS_SERIAL_PORT="1"        # see module Kconfig; "2" = USART6 on the ST Zio/Arduino header
 ```
 
-and run the agent with `serial --dev <tty>` instead of `udp4`. Note: with serial, `micro-ROS`
-framing is required (the Zephyr module's serial transports handle this via
-`MICRO_ROS_FRAMING_REQUIRED`).
+and run the agent with `serial --dev <tty>` instead of `udp4`. Serial needs XRCE
+framing; the module's serial transports handle it via `MICRO_ROS_FRAMING_REQUIRED`.
 
 ## Troubleshooting (symptoms seen in practice)
 
@@ -263,13 +255,13 @@ framing is required (the Zephyr module's serial transports handle this via
 The board prints its MAC at boot (`net: MAC ...`), which is handy when checking the
 router's client list.
 
-### "I had to reset the board before it connected"
+### Connection order
 
-The micro-ROS client creates its session at boot, so the usual order is: **start the
-agent, then reset the board**. In our tests a board that booted while the agent was
-already up sometimes kept retrying even though the agent answered XRCE pings from
-other hosts; restarting the agent and resetting the board always cleared it. The
-retry loop never gives up, so nothing has to be reflashed once the agent answers.
+The client creates its session at boot, so start the agent first and reset the board after
+it is up. A board that booted while the agent was already running occasionally kept
+retrying even though the agent answered XRCE pings from other hosts; restarting the agent
+and resetting the board cleared it. The retry loop never gives up, so no reflash is needed
+once the agent answers.
 
 ## Known limitations
 

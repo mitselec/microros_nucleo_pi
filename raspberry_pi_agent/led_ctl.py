@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Low-latency control of /zephyr_led_cmd.
+"""Publish /zephyr_led_cmd from a file, without starting a container per command.
 
-Why this exists
----------------
-`docker run ros:humble ... ros2 topic pub --once ...` costs several seconds
-per command, and none of it is the board:
+`docker run ros:humble ros2 topic pub` costs several seconds per command: container
+start, Python start, and a new DDS participant that the agent has to discover. This
+process starts once, keeps the publisher matched, and watches a control file.
 
-  * starting a container                          ~0.5-1 s
-  * starting Python + the `ros2` CLI on a Pi 3B+  ~2-4 s
-  * a fresh DDS participant the agent must find   ~0.2-1 s
-  * `--once`/`--times` also wait for that match
-
-This process starts once and keeps a publisher that is already matched with
-the agent. It watches a control file and publishes only when the value
-changes, so a command reaches the board in tens of milliseconds.
-
-Usage on the Pi (inside the `led-ctl` container from docker-compose.yml):
+Usage on the Pi (the `led-ctl` service in docker-compose.yml):
 
     echo true  > raspberry_pi_agent/ctrl/led   # blue LED on
     echo false > raspberry_pi_agent/ctrl/led   # blue LED off
@@ -30,9 +20,8 @@ from rclpy.node import Node
 from std_msgs.msg import Bool
 
 CTRL_FILE = os.environ.get("LED_CTRL_FILE", "/ctrl/led")
-POLL_INTERVAL = 0.02      # 50 Hz: how often the control file is read
-REPUBLISH_EVERY = 2.0     # re-assert the state (the command is a level, so
-                          # this is harmless and recovers a board that rebooted)
+POLL_INTERVAL = 0.02      # how often the control file is read (50 Hz)
+REPUBLISH_EVERY = 2.0     # re-send the level so a rebooted board catches up
 
 TRUE_WORDS = {"1", "true", "on", "yes"}
 FALSE_WORDS = {"0", "false", "off", "no"}
