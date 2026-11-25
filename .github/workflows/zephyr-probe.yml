@@ -18,8 +18,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - zephyr: v4.1.0
-            image: zephyrprojectrtos/zephyr-build:v0.26.17
           - zephyr: v4.2.0
             image: zephyrprojectrtos/zephyr-build:v0.30.0
           - zephyr: v4.3.0
@@ -63,11 +61,20 @@ jobs:
             -- -DAPP_VERSION="${{ matrix.zephyr }}" > build.log 2>&1 \
             || echo "=== BUILD FAILED ===" >> build.log
 
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.zephyr }}
+          path: build.log
+          if-no-files-found: warn
+
       - name: Report
         run: |
           if grep -q "=== BUILD FAILED ===" build.log; then
             echo "RESULT: FAILED"
-            grep -n -E "error:|fatal error|CMake Error|undefined reference|No such file" build.log | head -40 || true
+            echo "----- build.log -----"
+            sed -n '1,140p' build.log
           else
             echo "RESULT: OK"
             tail -5 build.log
