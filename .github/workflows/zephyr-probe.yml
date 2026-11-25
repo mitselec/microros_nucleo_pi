@@ -10,22 +10,41 @@ on:
 
 jobs:
   probe:
-    name: ${{ matrix.zephyr }}
+    name: ${{ matrix.zephyr }} ${{ matrix.libc }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Zephyr <= 4.3 requires Zephyr SDK 0.16.x, which still ships newlib.
+          - zephyr: v4.1.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: newlib
           - zephyr: v4.2.0
-            image: zephyrprojectrtos/zephyr-build:v0.30.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: newlib
           - zephyr: v4.3.0
-            image: zephyrprojectrtos/zephyr-build:v0.30.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: newlib
+          # Does the same tree build with picolibc on the old SDK as well?
+          - zephyr: v4.1.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: picolibc
+          - zephyr: v4.2.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: picolibc
+          - zephyr: v4.3.0
+            image: zephyrprojectrtos/zephyr-build:v0.26.17
+            libc: picolibc
+          # Zephyr >= 4.4 requires Zephyr SDK 1.0.x, which no longer ships
+          # newlib, so picolibc is the only full libc there.
           - zephyr: v4.4.0
             image: zephyrprojectrtos/zephyr-build:v0.30.0
+            libc: picolibc
           - zephyr: v4.5.0
             image: zephyrprojectrtos/zephyr-build:v0.30.0
+            libc: picolibc
     container:
       image: ${{ matrix.image }}
       options: --user root
@@ -37,6 +56,13 @@ jobs:
         run: |
           sed -i "s/revision: v4.1.0/revision: ${{ matrix.zephyr }}/" nucleo_f767zi_microros/west.yml
           grep -n "revision:" nucleo_f767zi_microros/west.yml
+
+      - name: Select C library
+        run: |
+          if [ "${{ matrix.libc }}" = "picolibc" ]; then
+            sed -i '/CONFIG_NEWLIB_LIBC/d' nucleo_f767zi_microros/prj.conf
+          fi
+          grep -n "LIBC\|POSIX" nucleo_f767zi_microros/prj.conf
 
       - name: Install build prerequisites
         run: pip3 install catkin_pkg lark-parser empy==3.3.4 colcon-common-extensions
@@ -54,27 +80,30 @@ jobs:
           echo "ZEPHYR_BASE=$GITHUB_WORKSPACE/zephyr" >> "$GITHUB_ENV"
           echo "ZEPHYR_TOOLCHAIN_VARIANT=zephyr" >> "$GITHUB_ENV"
           echo "ZEPHYR_SDK_INSTALL_DIR=$(ls -d /opt/toolchains/zephyr-sdk-* | tail -1)" >> "$GITHUB_ENV"
+          ls -d /opt/toolchains/zephyr-sdk-*
 
       - name: Build firmware
         run: |
           west build -b nucleo_f767zi -p always nucleo_f767zi_microros \
-            -- -DAPP_VERSION="${{ matrix.zephyr }}" > build.log 2>&1 \
-            || echo "=== BUILD FAILED ===" >> build.log
+            -- -DAPP_VERSION="${{ matrix.zephyr }}-${{ matrix.libc }}" > build.log 2>&1 \
+            || { echo "=== BUILD FAILED ===" >> build.log; exit 1; }
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ matrix.zephyr }}
+          name: build-log-${{ matrix.zephyr }}-${{ matrix.libc }}
           path: build.log
           if-no-files-found: warn
 
       - name: Report
+        if: always()
         run: |
+          [ -f build.log ] || touch build.log
           if grep -q "=== BUILD FAILED ===" build.log; then
             echo "RESULT: FAILED"
             echo "----- build.log -----"
-            sed -n '1,140p' build.log
+            sed -n '1,160p' build.log
           else
             echo "RESULT: OK"
             tail -5 build.log

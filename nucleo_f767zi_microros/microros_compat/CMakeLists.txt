@@ -18,3 +18,7 @@
 # why this shim exists as its own tiny module and is registered via
 # ZEPHYR_EXTRA_MODULES in the application CMakeLists.txt.
 zephyr_include_directories(${ZEPHYR_BASE}/include/zephyr)
+
+# Zephyr 4.3 split include/zephyr/posix/time.h into posix_time.h. rcutils still
+# includes the old name, so forward it (see include/zephyr/posix/time.h).
+zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
