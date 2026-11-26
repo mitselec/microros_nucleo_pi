@@ -61,14 +61,16 @@ still built because the Kconfig choice selects it, but the app no longer uses it
 
 | Zephyr version | Status | Notes |
 |---|---|---|
-| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`. Verified in CI (`zephyrprojectrtos/zephyr-build:v0.26.17`) and locally in WSL2. The `microros_compat/` shim is required. |
+| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`. Verified in CI and locally in WSL2. The `microros_compat/` shim is required. |
 | v4.0.0 | Claimed, not tested for UDP | The module README claims support, but its CI only builds the **serial** transports. UDP needs the same shim; untested here. |
-| v4.2+ | **Known broken** | Upstream issue [#158](https://github.com/micro-ROS/micro_ros_zephyr_module/issues/158): Zephyr ≥4.2 moved the POSIX headers again (`zephyr/posix/time.h` → `zephyr/posix/sys/time.h`) and this app does not compile. |
+| v4.2.0 | Tested green | CI probe passes with both newlib and picolibc. |
+| v4.3.0 | Tested green with newlib | CI probe passes with newlib. Zephyr's own POSIX timer implementation prevents the picolibc build. |
+| v4.4.0+ | Compatibility work in progress | Zephyr 4.4+ requires the picolibc overlay. The 4.4/4.5 CI probes exposed POSIX time-header conflicts and a missing generated-header include path; the compatibility shim now addresses both, but these versions need a fresh probe before being marked supported. |
 | v3.x | Not supported | The transport targets Zephyr ≥3.2; earlier versions used a different header layout. |
 
-Do not change `west.yml`'s `revision: v4.1.0` without re-testing. A bump breaks the
-header paths above, and the fix belongs in `microros_compat/CMakeLists.txt` and the
-module's UDP transport includes.
+Keep `west.yml` pinned at v4.1.0 for the normal build until the v4.4+ probe passes.
+Use `.github/workflows/zephyr-probe.yml` to test other versions without changing
+the production manifest.
 
 ## Configuring the agent address
 

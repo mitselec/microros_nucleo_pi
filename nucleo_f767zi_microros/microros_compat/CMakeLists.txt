@@ -23,6 +23,10 @@ zephyr_include_directories(${ZEPHYR_BASE}/include/zephyr)
 # includes the old name, so forward it (see include/zephyr/posix/time.h).
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+# Zephyr 4.5 keeps generated version.h under include/generated/zephyr, but the
+# micro-ROS ExternalProject still includes it as <version.h>.
+zephyr_include_directories(${CMAKE_BINARY_DIR}/zephyr/include/generated/zephyr)
+
 # rcutils asks for Annex K by defining __STDC_WANT_LIB_EXT1__ before including
 # <string.h>. picolibc only declares __errno_t and __rsize_t in sys/_types.h
 # when that macro is set on the header's first inclusion. By the time rcutils
