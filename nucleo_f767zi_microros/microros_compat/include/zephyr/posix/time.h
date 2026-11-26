@@ -5,9 +5,11 @@
  * name on every Zephyr >= 3.1, so the libmicroros build fails on 4.3+ with
  *     fatal error: zephyr/posix/time.h: No such file or directory
  *
- * Forward to the real header when it exists (Zephyr <= 4.2), and to the
- * replacement otherwise. posix_time.h expects the C library's <time.h> to
- * have defined struct timespec already.
+ * Forward to the real header when it exists (Zephyr <= 4.2). On 4.3+ there is
+ * no forwarding header: newlib already declares clock_gettime() and the timer
+ * functions in its own <time.h>, so including posix_time.h as well would only
+ * duplicate struct itimerspec. picolibc needs posix_time.h because it does not
+ * declare those functions itself.
  */
 #ifndef MICROROS_COMPAT_ZEPHYR_POSIX_TIME_H_
 #define MICROROS_COMPAT_ZEPHYR_POSIX_TIME_H_
@@ -21,7 +23,9 @@
 
 #ifndef MICROROS_COMPAT_POSIX_TIME_FORWARDED
 #include <time.h>
+#if !defined(CONFIG_NEWLIB_LIBC)
 #include <zephyr/posix/posix_time.h>
+#endif
 #endif
 
 #endif /* MICROROS_COMPAT_ZEPHYR_POSIX_TIME_H_ */

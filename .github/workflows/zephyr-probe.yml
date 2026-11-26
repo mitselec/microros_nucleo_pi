@@ -57,12 +57,8 @@ jobs:
           sed -i "s/revision: v4.1.0/revision: ${{ matrix.zephyr }}/" nucleo_f767zi_microros/west.yml
           grep -n "revision:" nucleo_f767zi_microros/west.yml
 
-      - name: Select C library
-        run: |
-          if [ "${{ matrix.libc }}" = "picolibc" ]; then
-            sed -i '/CONFIG_NEWLIB_LIBC/d' nucleo_f767zi_microros/prj.conf
-          fi
-          grep -n "LIBC\|POSIX" nucleo_f767zi_microros/prj.conf
+      - name: Show libc settings
+        run: grep -n "LIBC\|POSIX" nucleo_f767zi_microros/prj.conf
 
       - name: Install build prerequisites
         run: pip3 install catkin_pkg lark-parser empy==3.3.4 colcon-common-extensions
@@ -84,8 +80,12 @@ jobs:
 
       - name: Build firmware
         run: |
+          extra=""
+          if [ "${{ matrix.libc }}" = "picolibc" ]; then
+            extra="-DEXTRA_CONF_FILE=$PWD/nucleo_f767zi_microros/prj_picolibc.conf"
+          fi
           west build -b nucleo_f767zi -p always nucleo_f767zi_microros \
-            -- -DAPP_VERSION="${{ matrix.zephyr }}-${{ matrix.libc }}" > build.log 2>&1 \
+            -- -DAPP_VERSION="${{ matrix.zephyr }}-${{ matrix.libc }}" $extra > build.log 2>&1 \
             || { echo "=== BUILD FAILED ===" >> build.log; exit 1; }
 
       - name: Upload build log

@@ -23,18 +23,6 @@ zephyr_include_directories(${ZEPHYR_BASE}/include/zephyr)
 # includes the old name, so forward it (see include/zephyr/posix/time.h).
 zephyr_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Zephyr's newlib integration defines _ANSI_SOURCE so that newlib does not
-# declare POSIX types that Zephyr's own POSIX layer also defines. That define
-# lives in lib/libc/newlib, which is processed after libmicroros has already
-# captured its compiler flags for the ExternalProject. Without it, newlib's
-# <time.h> and Zephyr's posix_time.h both define struct itimerspec and
-# timer_gettime()/timer_settime(), which is a hard error on Zephyr 4.3.
-# Define it here as well, while the flags are still being collected. Zephyr
-# already adds it for every newlib build, so this only moves it earlier.
-if(CONFIG_NEWLIB_LIBC)
-  zephyr_compile_definitions(_ANSI_SOURCE)
-endif()
-
 # rcutils asks for Annex K by defining __STDC_WANT_LIB_EXT1__ before including
 # <string.h>. picolibc only declares __errno_t and __rsize_t in sys/_types.h
 # when that macro is set on the header's first inclusion. By the time rcutils
@@ -46,3 +34,20 @@ endif()
 if(CONFIG_PICOLIBC)
   zephyr_compile_definitions(__STDC_WANT_LIB_EXT1__=0)
 endif()
+
+# rcutils' process.c calls fork() and execvp(). Zephyr implements neither, and
+# its POSIX headers do not declare them, so the implicit declarations become
+# errors on Zephyr 4.4. The micro-ROS stack never calls the rcutils process
+# API, so compile that implementation out instead of adding two more stubs.
+zephyr_compile_definitions(RCUTILS_NO_PROCESS_SUPPORT)
+
+# picolibc only declares strcasecmp()/strncasecmp() for POSIX <= 2001, and
+# Zephyr does not declare isatty() for picolibc at all. rcutils uses all three,
+# so force the declarations in (see include/microros_posix_compat.h). The
+# header is empty for assembly, and redeclaring an existing prototype is
+# harmless, so this is safe for newlib builds as well.
+zephyr_compile_options(
+  -include ${CMAKE_CURRENT_SOURCE_DIR}/include/microros_posix_compat.h)
+
+zephyr_library()
+zephyr_library_sources(src/posix_stubs.c)
