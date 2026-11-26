@@ -65,12 +65,12 @@ still built because the Kconfig choice selects it, but the app no longer uses it
 | v4.0.0 | Claimed, not tested for UDP | The module README claims support, but its CI only builds the **serial** transports. UDP needs the same shim; untested here. |
 | v4.2.0 | Tested green | CI probe passes with both newlib and picolibc. |
 | v4.3.0 | Tested green with newlib | CI probe passes with newlib. Zephyr's own POSIX timer implementation prevents the picolibc build. |
-| v4.4.0+ | Compatibility work in progress | Zephyr 4.4+ requires the picolibc overlay. The 4.4/4.5 CI probes exposed POSIX time-header conflicts and a missing generated-header include path; the compatibility shim now addresses both, but these versions need a fresh probe before being marked supported. |
+| v4.4.0 and v4.5.0 | Tested green with picolibc | CI probe passes with the `prj_picolibc.conf` overlay. Later Zephyr releases are not yet tested. |
 | v3.x | Not supported | The transport targets Zephyr ≥3.2; earlier versions used a different header layout. |
 
-Keep `west.yml` pinned at v4.1.0 for the normal build until the v4.4+ probe passes.
-Use `.github/workflows/zephyr-probe.yml` to test other versions without changing
-the production manifest.
+`west.yml` remains pinned at v4.1.0 for the normal build; the compatibility probe
+has verified builds through v4.5.0. Use `.github/workflows/zephyr-probe.yml` to
+test later versions without changing the production manifest.
 
 ## Configuring the agent address
 
