@@ -34,9 +34,9 @@ jobs:
           - zephyr: v4.2.0
             image: zephyrprojectrtos/zephyr-build:v0.26.17
             libc: picolibc
-          - zephyr: v4.3.0
-            image: zephyrprojectrtos/zephyr-build:v0.26.17
-            libc: picolibc
+          # v4.3.0 picolibc is skipped: Zephyr's own lib/posix/options/timer.c
+          # does not compile against the picolibc struct sigevent in that
+          # release, independent of this application.
           # Zephyr >= 4.4 requires Zephyr SDK 1.0.x, which no longer ships
           # newlib, so picolibc is the only full libc there.
           - zephyr: v4.4.0
