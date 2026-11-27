@@ -17,8 +17,9 @@ micro-ROS node over the board's **integrated Ethernet, using UDP transport**.
 nucleo_f767zi_microros/
   |- CMakeLists.txt          # Zephyr application build script
   |- prj.conf                # Kconfig (micro-ROS, transport, networking)
+  |- prj_picolibc.conf       # picolibc overlay for Zephyr 4.4+ (see note below)
   |- west.yml                # west manifest: pulls Zephyr v4.1.0 + micro-ROS module
-  |- microros_compat/        # include-path shim module (see note below)
+  |- microros_compat/        # compatibility module (see note below)
   |- src/main.c              # demo application
   |- src/udp_transport.c     # self-contained UDP transport (see note below)
   |- src/udp_transport.h
@@ -30,12 +31,27 @@ After `west init`/`west update`, the workspace contains `zephyr/`,
 ### Why `microros_compat/` exists
 
 The micro-ROS module is registered manually via `ZEPHYR_EXTRA_MODULES`
-(its repo is not a west module itself - see `CMakeLists.txt`). Additionally,
-its UDP transport code still uses the pre-Zephyr-3.4 header style
-(`#include <posix/sys/socket.h>`), unchanged upstream since Dec 2022 in *all*
-`micro_ros_zephyr_module` branches (including `rolling`). The
-`microros_compat/` shim module restores compatibility on Zephyr >= 3.4 by
-adding `include/zephyr` to the include path - no module files are modified.
+(its repo is not a west module itself - see `CMakeLists.txt`). The
+`microros_compat/` module then carries the small fixes needed to build the
+module against newer Zephyr releases, without modifying any module file:
+
+- It adds `include/zephyr` to the include path, because the module's UDP
+  transport still uses the pre-Zephyr-3.4 header style
+  (`#include <posix/sys/socket.h>`). Upstream has not changed this since
+  Dec 2022 in *any* `micro_ros_zephyr_module` branch, including `rolling`.
+- It forwards `zephyr/posix/time.h` to `<time.h>` on Zephyr 4.3+, where the
+  old header was removed. Zephyr defines `_POSIX_C_SOURCE=200809L` for the
+  build, so the C library header already declares the POSIX time APIs and
+  including `posix_time.h` as well would duplicate them.
+- It declares `strcasecmp()`, `strncasecmp()` and `isatty()` for picolibc,
+  where Zephyr's POSIX headers do not expose them, and provides a weak
+  `isatty()` stub. rcutils only uses it to decide whether to colourise log
+  output.
+- It disables rcutils' process support (`RCUTILS_NO_PROCESS_SUPPORT`),
+  because Zephyr implements neither `fork()` nor `execvp()`, and turns off
+  rcutils' Annex K request for picolibc.
+- It adds the generated `zephyr/include/generated/zephyr` directory to the
+  include path, where Zephyr 4.5 keeps `<version.h>`.
 
 ### Why the app ships its own UDP transport
 
@@ -61,16 +77,16 @@ still built because the Kconfig choice selects it, but the app no longer uses it
 
 | Zephyr version | Status | Notes |
 |---|---|---|
-| **v4.1.0** | **Tested green** | `west.yml` pins `revision: v4.1.0`. Verified in CI and locally in WSL2. The `microros_compat/` shim is required. |
-| v4.0.0 | Claimed, not tested for UDP | The module README claims support, but its CI only builds the **serial** transports. UDP needs the same shim; untested here. |
-| v4.2.0 | Tested green | CI probe passes with both newlib and picolibc. |
-| v4.3.0 | Tested green with newlib | CI probe passes with newlib. Zephyr's own POSIX timer implementation prevents the picolibc build. |
-| v4.4.0 and v4.5.0 | Tested green with picolibc | CI probe passes with the `prj_picolibc.conf` overlay. Later Zephyr releases are not yet tested. |
+| **v4.1.0** | **Runtime tested** | `west.yml` pins `revision: v4.1.0`. Built in CI and run on the board. The `microros_compat/` module is required. |
+| v4.0.0 | Claimed, not tested for UDP | The module README claims support, but its CI only builds the **serial** transports. UDP needs the same compatibility module; untested here. |
+| v4.2.0 | Builds in CI | Newlib and picolibc. Not run on hardware. |
+| v4.3.0 | Builds in CI with newlib | Zephyr's own POSIX timer implementation prevents the picolibc build. Not run on hardware. |
+| v4.4.0 and v4.5.0 | Builds in CI with picolibc | Requires Zephyr SDK 1.0.x and the `prj_picolibc.conf` overlay. Not run on hardware. |
 | v3.x | Not supported | The transport targets Zephyr ≥3.2; earlier versions used a different header layout. |
 
-`west.yml` remains pinned at v4.1.0 for the normal build; the compatibility probe
-has verified builds through v4.5.0. Use `.github/workflows/zephyr-probe.yml` to
-test later versions without changing the production manifest.
+`west.yml` remains pinned at v4.1.0 for the normal build. Newer releases are
+build-verified only; run the "Zephyr compatibility probe" workflow manually from
+the Actions tab to check them without changing the production manifest.
 
 ## Configuring the agent address
 
@@ -120,6 +136,10 @@ tar xzf zephyr-sdk-0.16.9_linux-x86_64.tar.xz
 cd zephyr-sdk-0.16.9 && ./zephyr-sdk-0.16.9-setup.sh -c
 ```
 
+Zephyr 4.1 to 4.3 use SDK 0.16.x. Zephyr 4.4 and newer require SDK 1.0.x,
+which no longer ships newlib; install the matching release from the same
+download page and point `ZEPHYR_SDK_INSTALL_DIR` at it.
+
 ### 2. Initialize the workspace and build
 
 ```bash
@@ -140,6 +160,22 @@ If the micro-ROS module is not auto-discovered on your west version, add it expl
 west build -b nucleo_f767zi -p always . -- \
   -DZEPHYR_EXTRA_MODULES=$PWD/../modules/micro_ros_zephyr_module/modules/libmicroros
 ```
+
+#### Zephyr 4.4 and newer (picolibc)
+
+`west.yml` pins v4.1.0, so a normal build uses newlib. To build a newer
+release, change the manifest revision and add the picolibc overlay:
+
+```bash
+sed -i 's/revision: v4.1.0/revision: v4.5.0/' west.yml
+west update
+west build -b nucleo_f767zi -p always . -- \
+  -DEXTRA_CONF_FILE=prj_picolibc.conf
+```
+
+Zephyr 4.3 is the exception: its POSIX timer code does not compile against
+picolibc, so use newlib there. Builds for 4.4 and 4.5 have been verified in CI
+but not run on hardware; keep `west.yml` at v4.1.0 for the normal demo.
 
 ### 3. Flashing
 
