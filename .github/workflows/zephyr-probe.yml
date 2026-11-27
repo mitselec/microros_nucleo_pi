@@ -1,11 +1,10 @@
 name: Zephyr compatibility probe
 
-# Temporary: builds this app against several Zephyr releases to find out which
-# one breaks and where. Not part of the normal CI; the branch is deleted after.
+# Builds this app against every Zephyr release in the compatibility matrix.
+# Run it manually from the Actions tab. It is separate from the normal CI so
+# that the production manifest stays pinned and docs-only changes stay cheap.
 
 on:
-  push:
-    branches: [test/zephyr-4x]
   workflow_dispatch:
 
 jobs:
