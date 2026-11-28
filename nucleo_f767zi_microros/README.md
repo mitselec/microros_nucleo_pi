@@ -3,10 +3,13 @@
 A Zephyr application (this folder is also a **west manifest repository**) that runs a
 micro-ROS node over the board's **integrated Ethernet, using UDP transport**.
 
-- Publishes `std_msgs/msg/Int32` on `/zephyr_heartbeat` every 1000 ms (green user LED blinks).
+- Publishes `std_msgs/msg/Int32` on `/zephyr_heartbeat` every 1000 ms while the
+  agent is reachable (green user LED blinks).
 - Subscribes to `std_msgs/msg/Bool` on `/zephyr_led_cmd` (`true` = blue user LED on, `false` = off).
-- Waits for the micro-ROS agent at `CONFIG_MICROROS_AGENT_IP:CONFIG_MICROROS_AGENT_PORT`
-  and retries until it is reachable.
+- Pings the micro-ROS agent at `CONFIG_MICROROS_AGENT_IP:CONFIG_MICROROS_AGENT_PORT`,
+  creates the node only while the agent answers, and destroys it again when the
+  connection is lost. The heartbeat counter and the green LED stop when the
+  agent is unreachable, and the board reconnects on its own when it returns.
 - Uses a **static IPv4 address** (`CONFIG_NET_CONFIG_MY_IPV4_ADDR`, default
   `192.168.0.230`) so the demo does not depend on the router's DHCP server; DHCP
   can be enabled instead with one line in `prj.conf`.
@@ -199,10 +202,11 @@ runners also exist on this board).
 1. Connect the RJ45 to the same switch/router as the Pi.
 2. Start the agent on the Pi (see `../raspberry_pi_agent/README.md`).
 3. Reset the board. The console (ST-LINK VCP, USART3 @115200) prints agent/address info.
-   A blinking green LED (LD1) means "publishing".
+   A green LED (LD1) that toggles once per second means "connected and publishing".
+   A fast blink (100 ms) means "running, but the agent is not answering".
 
-A healthy boot looks like this (the transport opens a socket for the ping and
-again for the session, hence the two lines):
+A healthy boot looks like this (the first successful socket open is logged; later
+reconnects reuse the same transport without repeating the line):
 
 ```
 *** Booting Zephyr OS build v4.1.0 ***
@@ -211,8 +215,7 @@ net: MAC 00:80:e1:b4:e0:81
 net: ethernet@40028000 is 192.168.0.230
 micro-ROS UDP agent target 192.168.0.249:8888
 udp: socket 3 connected to 192.168.0.249:8888
-micro-ROS agent reachable, creating the node
-udp: socket 3 connected to 192.168.0.249:8888
+micro-ROS agent reachable, node created
 micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd
 ```
 
@@ -230,6 +233,33 @@ The timestamp is when the callback ran. The GPIO write happens before the print,
 line means the sample arrived late, not that the board was slow. The main loop waits 1 ms
 (`rclc_executor_spin_some(1 ms)` + `k_msleep(1)`), so a received sample is handled within
 ~2 ms.
+
+### Agent loss and reconnect
+
+The heartbeat counter advances only after `rcl_publish()` confirms that the agent
+received the sample. The default publisher QoS is reliable, so `rcl_publish()`
+waits for the agent to acknowledge the sample and returns an error when that
+acknowledgement does not arrive within the session timeout. The timer callback
+does not increment the counter or toggle the LED after a failed publish.
+
+A ping once per second is the second line of defence. When it fails, the node and
+its endpoints are destroyed, the green LED switches to the fast blink, and the
+board keeps pinging every 500 ms. When the agent answers again, the node is
+created from scratch. The counter keeps its value across reconnects, so it still
+counts heartbeats since boot.
+
+A disconnect looks like this on the console:
+
+```
+micro-ROS agent lost, dropping the session
+Waiting for the micro-ROS agent (192.168.0.249:8888), attempt 1...
+Waiting for the micro-ROS agent (192.168.0.249:8888), attempt 2...
+micro-ROS agent reachable, node created
+micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd
+```
+
+The wait line is printed for the first ten attempts and then every tenth attempt,
+so a long outage does not flood the console.
 
 ## Downloading & flashing CI firmware (no local toolchain needed)
 
@@ -286,7 +316,9 @@ framing; the module's serial transports handle it via `MICRO_ROS_FRAMING_REQUIRE
 |---|---|---|
 | `net: no IPv4 yet (Ns): carrier up, iface up` repeating forever | Link is fine, no usable DHCP lease (often an address-conflict loop on the router) | Use the static-IP block in `prj.conf`, or give the router a reservation for the board's MAC |
 | `net: no IPv4 yet (...): carrier DOWN` | No link: cable, switch port, or PHY | Try another cable/port; check the RJ45 LEDs |
-| `Waiting for the micro-ROS agent (IP:PORT), attempt N...` forever | Agent not running, wrong IP/port baked into the firmware, a firewall, or a session the agent still holds for the previous boot | `docker ps`/`docker logs microros-agent` on the Pi; check that `CONFIG_MICROROS_AGENT_IP` matches `hostname -I`. Then press the board's **RESET** (the client connects at boot). If it still retries, `docker restart microros-agent` and reset again |
+| Green LED blinks fast (100 ms) | Board is running, but the agent is not answering | Start the agent; check that `CONFIG_MICROROS_AGENT_IP` matches `hostname -I` and that port 8888 is reachable |
+| `Waiting for the micro-ROS agent (IP:PORT), attempt N...` repeating | Agent not running, wrong IP/port baked into the firmware, a firewall, or a session the agent still holds for the previous boot | `docker ps`/`docker logs microros-agent` on the Pi; check that `CONFIG_MICROROS_AGENT_IP` matches `hostname -I`. The board retries on its own; `docker restart microros-agent` if the old session does not expire |
+| `heartbeat publish failed (N), not advancing` | The agent stopped acknowledging while the ping still succeeded | Expected during a disconnect; the next ping drops the session and the board reconnects |
 | `udp: connect() to ... failed (errno N)` | No route yet (interface has no address) | The app waits for the address first; if it persists, check the subnet/netmask |
 | PC cannot ping the board right after flashing (`Destination host unreachable`) | ARP not resolved yet while the board is still booting | Wait a few seconds and retry; `arp -a` should then show the board's MAC |
 
@@ -295,11 +327,11 @@ router's client list.
 
 ### Connection order
 
-The client creates its session at boot, so start the agent first and reset the board after
-it is up. A board that booted while the agent was already running occasionally kept
-retrying even though the agent answered XRCE pings from other hosts; restarting the agent
-and resetting the board cleared it. The retry loop never gives up, so no reflash is needed
-once the agent answers.
+The board can boot before or after the agent. It pings until the agent answers, creates the
+session, and recreates it if the agent restarts. If the agent still holds the session from
+the previous boot, session creation can fail until that entry expires; the board keeps
+retrying, so no reset or reflash is needed. `docker restart microros-agent` clears the old
+session immediately.
 
 ## Known limitations
 

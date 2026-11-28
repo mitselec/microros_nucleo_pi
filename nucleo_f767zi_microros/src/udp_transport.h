@@ -25,6 +25,10 @@ typedef struct {
 	char ip[16];
 	char port[6];
 	int fd;
+	/* Set after the first successful open, so the reconnect loop does not
+	 * print a socket line every time it probes for the agent.
+	 */
+	bool open_logged;
 } app_udp_params_t;
 
 bool app_udp_open(struct uxrCustomTransport *transport);

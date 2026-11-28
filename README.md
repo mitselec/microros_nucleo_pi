@@ -4,7 +4,7 @@
 
 Two parts, connected over **UDP on the LAN**:
 
-> **Status:** verified end-to-end. Nucleo at `192.168.0.230` (Zephyr v4.1.0), Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off.
+> **Status:** verified end-to-end. Nucleo at `192.168.0.230` (Zephyr v4.1.0), Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, `ros2 topic pub` switches the blue LED on/off, and the board recreates its node after the agent restarts.
 
 ```mermaid
 flowchart LR
@@ -15,7 +15,7 @@ flowchart LR
     end
 
     subgraph NUC["NUCLEO-F767ZI (Zephyr RTOS)"]
-        NODE["micro-ROS node<br/>publishes /zephyr_heartbeat (Int32)<br/>subscribes /zephyr_led_cmd (Bool)<br/>green LED blinks on each publish<br/>blue LED follows /zephyr_led_cmd (true = on)"]
+        NODE["micro-ROS node<br/>publishes /zephyr_heartbeat (Int32)<br/>subscribes /zephyr_led_cmd (Bool)<br/>green LED: 1 Hz while connected, fast blink while reconnecting<br/>blue LED follows /zephyr_led_cmd (true = on)"]
     end
 
     AGENT <-->|UDP 8888<br/>over Ethernet, RJ45| NODE
@@ -31,7 +31,7 @@ flowchart LR
 
 | Topic | Type | Direction | Effect |
 |---|---|---|---|
-| `/zephyr_heartbeat` | `std_msgs/msg/Int32` | Nucleo -> Pi | Counter, published once per second; green LED (LD1, PB0) blinks on each publish |
+| `/zephyr_heartbeat` | `std_msgs/msg/Int32` | Nucleo -> Pi | Counter, published once per second while the agent is reachable; the counter and the green LED (LD1, PB0) stop when the connection is lost |
 | `/zephyr_led_cmd` | `std_msgs/msg/Bool` | Pi -> Nucleo | `true` turns the blue LED (LD2, PB7) on, `false` turns it off |
 
 ## Quick start

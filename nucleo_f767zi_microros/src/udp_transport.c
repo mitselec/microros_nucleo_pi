@@ -46,8 +46,11 @@ bool app_udp_open(struct uxrCustomTransport *transport)
 		goto fail;
 	}
 
-	printk("udp: socket %d connected to %s:%s\n",
-	       params->fd, params->ip, params->port);
+	if (!params->open_logged) {
+		printk("udp: socket %d connected to %s:%s\n",
+		       params->fd, params->ip, params->port);
+		params->open_logged = true;
+	}
 	return true;
 
 fail:

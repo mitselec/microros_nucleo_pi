@@ -11,11 +11,19 @@
  *   - publisher  "zephyr_heartbeat"  std_msgs/msg/Int32   (1 Hz, green LED blink)
  *   - subscriber "zephyr_led_cmd"    std_msgs/msg/Bool    (toggles blue LED)
  *
+ * The application follows the micro-ROS reconnection pattern: it pings the
+ * agent, creates the node only while the agent answers, and destroys the node
+ * again when the connection is lost. The heartbeat counter advances only after
+ * a publish that the agent acknowledged, so the green LED stops pretending to
+ * be connected while the Pi is down.
+ *
  * LEDs (from the Nucleo F767ZI devicetree aliases):
- *   led0 -> green user LED LD1, PB0 -> toggled on every publish
+ *   led0 -> green user LED LD1, PB0 -> slow blink when connected,
+ *                                      fast blink when the agent is unreachable
  *   led1 -> blue  user LED LD2, PB7 -> toggled on every received command
  */
 
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -38,26 +46,26 @@
 
 #include "udp_transport.h"
 
-#define RCCHECK(fn)                                                            \
-	{                                                                          \
-		rcl_ret_t temp_rc = fn;                                                \
-		if ((temp_rc != RCL_RET_OK)) {                                         \
-			printk("micro-ROS failure at line %d: %d. Aborting.\n",            \
-			       __LINE__, (int)temp_rc);                                    \
-			for (;;) {                                                         \
-				;                                                              \
-			}                                                                  \
-		}                                                                      \
-	}
+/* One ping is enough to tell whether the agent answers: the timeout covers a
+ * busy LAN, and the outer loop decides when to try again.
+ */
+#define PING_TIMEOUT_MS           100
+#define PING_ATTEMPTS             1
 
-#define RCSOFTCHECK(fn)                                                        \
-	{                                                                          \
-		rcl_ret_t temp_rc = fn;                                                \
-		if ((temp_rc != RCL_RET_OK)) {                                         \
-			printk("micro-ROS soft failure at line %d: %d. Continuing.\n",     \
-			       __LINE__, (int)temp_rc);                                    \
-		}                                                                      \
-	}
+/* While connected, ping once a second. The heartbeat timer runs at the same
+ * rate, so a dead agent is noticed within roughly one publish period.
+ */
+#define CONNECTED_PING_PERIOD_MS  1000
+
+/* While waiting for the agent, retry twice a second. The transport opens and
+ * closes a socket per ping, so this is also the reconnect latency.
+ */
+#define RECONNECT_PING_PERIOD_MS  500
+
+/* Fast blink used while the agent is unreachable. It is clearly different from
+ * the 1 s heartbeat so the two states cannot be confused.
+ */
+#define DISCONNECTED_BLINK_MS     100
 
 #define LED_HEARTBEAT_NODE DT_ALIAS(led0)
 #define LED_COMMAND_NODE   DT_ALIAS(led1)
@@ -67,21 +75,83 @@ static const struct gpio_dt_spec led_heartbeat =
 static const struct gpio_dt_spec led_command =
 	GPIO_DT_SPEC_GET(LED_COMMAND_NODE, gpios);
 
+static bool leds_ready;
+
+static rclc_support_t support;
+static rcl_node_t node;
+static rclc_executor_t executor;
 static rcl_publisher_t heartbeat_publisher;
 static std_msgs__msg__Int32 heartbeat_msg;
 static rcl_timer_t heartbeat_timer;
 static rcl_subscription_t led_cmd_subscription;
 static std_msgs__msg__Bool led_cmd_msg;
 
-static void heartbeat_timer_callback(rcl_timer_t *timer, int64_t last_call_time)
-{
-	RCLC_UNUSED(last_call_time);
+enum connection_state {
+	CONN_WAITING_AGENT,
+	CONN_AGENT_AVAILABLE,
+	CONN_AGENT_CONNECTED,
+	CONN_AGENT_DISCONNECTED,
+};
 
-	if (timer != NULL) {
-		RCSOFTCHECK(rcl_publish(&heartbeat_publisher, &heartbeat_msg, NULL));
-		heartbeat_msg.data++;
+static void heartbeat_led_set(bool on)
+{
+	if (leds_ready) {
+		gpio_pin_set_dt(&led_heartbeat, on ? 1 : 0);
+	}
+}
+
+static void heartbeat_led_toggle(void)
+{
+	if (leds_ready) {
 		gpio_pin_toggle_dt(&led_heartbeat);
 	}
+}
+
+static bool period_elapsed(int64_t *last_ms, int64_t period_ms)
+{
+	int64_t now = k_uptime_get();
+
+	if (now - *last_ms < period_ms) {
+		return false;
+	}
+
+	*last_ms = now;
+	return true;
+}
+
+static void update_disconnected_led(int64_t *last_toggle_ms, bool *led_on)
+{
+	if (!period_elapsed(last_toggle_ms, DISCONNECTED_BLINK_MS)) {
+		return;
+	}
+
+	*led_on = !*led_on;
+	heartbeat_led_set(*led_on);
+}
+
+static void heartbeat_timer_callback(rcl_timer_t *timer, int64_t last_call_time)
+{
+	rcl_ret_t rc;
+
+	RCLC_UNUSED(last_call_time);
+
+	if (timer == NULL) {
+		return;
+	}
+
+	/* Advance the counter and blink only when the agent confirmed the sample.
+	 * The default publisher QoS is reliable, so rcl_publish() waits for the
+	 * XRCE acknowledgement and fails when the link is gone. Best-effort
+	 * publishing would report success for a UDP datagram that nobody reads.
+	 */
+	rc = rcl_publish(&heartbeat_publisher, &heartbeat_msg, NULL);
+	if (rc != RCL_RET_OK) {
+		printk("heartbeat publish failed (%d), not advancing\n", (int)rc);
+		return;
+	}
+
+	heartbeat_msg.data++;
+	heartbeat_led_toggle();
 }
 
 static void led_cmd_subscription_callback(const void *msgin)
@@ -93,7 +163,9 @@ static void led_cmd_subscription_callback(const void *msgin)
 	 * Idempotent, so publishing the command several times (or retrying
 	 * because a DDS discovery race ate the first sample) is harmless.
 	 */
-	gpio_pin_set_dt(&led_command, msg->data ? 1 : 0);
+	if (leds_ready) {
+		gpio_pin_set_dt(&led_command, msg->data ? 1 : 0);
+	}
 
 	/* Log only real changes: this is the moment the command took effect, so
 	 * the console timestamp shows whether a "slow" command was late on the
@@ -108,7 +180,7 @@ static void led_cmd_subscription_callback(const void *msgin)
 
 static int leds_init(void)
 {
-	int ret = 0;
+	int ret;
 
 	if (!gpio_is_ready_dt(&led_heartbeat)) {
 		return -ENODEV;
@@ -117,7 +189,7 @@ static int leds_init(void)
 		return -ENODEV;
 	}
 
-	ret = gpio_pin_configure_dt(&led_heartbeat, GPIO_OUTPUT_ACTIVE);
+	ret = gpio_pin_configure_dt(&led_heartbeat, GPIO_OUTPUT_INACTIVE);
 	if (ret < 0) {
 		return ret;
 	}
@@ -126,6 +198,7 @@ static int leds_init(void)
 		return ret;
 	}
 
+	leds_ready = true;
 	return 0;
 }
 
@@ -182,9 +255,123 @@ static void wait_for_ipv4(void)
 	}
 }
 
+/*
+ * Create the node and its endpoints. Any partial failure is unwound here so the
+ * state machine never has to guess how far creation got.
+ */
+static bool create_entities(void)
+{
+	rcl_allocator_t allocator = rcl_get_default_allocator();
+	rcl_ret_t rc;
+
+	rc = rclc_support_init(&support, 0, NULL, &allocator);
+	if (rc != RCL_RET_OK) {
+		printk("micro-ROS init failed (%d)\n", (int)rc);
+		return false;
+	}
+
+	rc = rclc_node_init_default(&node, "nucleo_f767zi_node", "", &support);
+	if (rc != RCL_RET_OK) {
+		printk("node creation failed (%d)\n", (int)rc);
+		goto fail_support;
+	}
+
+	rc = rclc_publisher_init_default(
+		&heartbeat_publisher,
+		&node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
+		"zephyr_heartbeat");
+	if (rc != RCL_RET_OK) {
+		printk("heartbeat publisher creation failed (%d)\n", (int)rc);
+		goto fail_node;
+	}
+
+	rc = rclc_subscription_init_default(
+		&led_cmd_subscription,
+		&node,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
+		"zephyr_led_cmd");
+	if (rc != RCL_RET_OK) {
+		printk("LED subscription creation failed (%d)\n", (int)rc);
+		goto fail_publisher;
+	}
+
+	rc = rclc_timer_init_default2(
+		&heartbeat_timer,
+		&support,
+		RCL_MS_TO_NS(1000),
+		heartbeat_timer_callback,
+		true);
+	if (rc != RCL_RET_OK) {
+		printk("heartbeat timer creation failed (%d)\n", (int)rc);
+		goto fail_subscription;
+	}
+
+	rc = rclc_executor_init(&executor, &support.context, 2, &allocator);
+	if (rc != RCL_RET_OK) {
+		printk("executor creation failed (%d)\n", (int)rc);
+		goto fail_executor;
+	}
+
+	rc = rclc_executor_add_timer(&executor, &heartbeat_timer);
+	if (rc != RCL_RET_OK) {
+		printk("adding the heartbeat timer failed (%d)\n", (int)rc);
+		goto fail_executor;
+	}
+
+	rc = rclc_executor_add_subscription(
+		&executor, &led_cmd_subscription, &led_cmd_msg,
+		&led_cmd_subscription_callback, ON_NEW_DATA);
+	if (rc != RCL_RET_OK) {
+		printk("adding the LED subscription failed (%d)\n", (int)rc);
+		goto fail_executor;
+	}
+
+	return true;
+
+fail_executor:
+	(void)rclc_executor_fini(&executor);
+fail_timer:
+	(void)rcl_timer_fini(&heartbeat_timer);
+fail_subscription:
+	(void)rcl_subscription_fini(&led_cmd_subscription, &node);
+fail_publisher:
+	(void)rcl_publisher_fini(&heartbeat_publisher, &node);
+fail_node:
+	(void)rcl_node_fini(&node);
+fail_support:
+	(void)rclc_support_fini(&support);
+	return false;
+}
+
+static void destroy_entities(void)
+{
+	rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
+
+	/* The agent is already gone. Waiting for the session timeout of every
+	 * entity would only stall the loop, so destroy them immediately.
+	 */
+	(void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
+
+	(void)rclc_executor_fini(&executor);
+	(void)rcl_timer_fini(&heartbeat_timer);
+	(void)rcl_subscription_fini(&led_cmd_subscription, &node);
+	(void)rcl_publisher_fini(&heartbeat_publisher, &node);
+	(void)rcl_node_fini(&node);
+	(void)rclc_support_fini(&support);
+}
+
 int main(void)
 {
 	int ret;
+	static app_udp_params_t transport_params = {
+		.fd = -1,
+	};
+	enum connection_state state = CONN_WAITING_AGENT;
+	int64_t last_ping_ms;
+	int64_t last_blink_ms;
+	bool led_on = false;
+	unsigned int attempts = 0;
 
 	printk("\nmicro-ROS demo %s\n", APP_VERSION);
 
@@ -194,10 +381,6 @@ int main(void)
 	}
 
 	wait_for_ipv4();
-
-	static app_udp_params_t transport_params = {
-		.fd = -1,
-	};
 
 	strcpy(transport_params.ip, CONFIG_MICROROS_AGENT_IP);
 	strcpy(transport_params.port, CONFIG_MICROROS_AGENT_PORT);
@@ -212,80 +395,81 @@ int main(void)
 		app_udp_write,
 		app_udp_read);
 
-	/* Wait for the agent to answer. Log every attempt while the link is
-	 * still settling, then back off to every fifth attempt.
-	 */
-	int attempts = 0;
-	while (rmw_uros_ping_agent(1000, 1) != RMW_RET_OK) {
-		attempts++;
-		if (attempts <= 10 || attempts % 5 == 0) {
-			printk("Waiting for the micro-ROS agent (%s:%s), attempt %d...\n",
-			       CONFIG_MICROROS_AGENT_IP,
-			       CONFIG_MICROROS_AGENT_PORT,
-			       attempts);
-		}
-		k_msleep(1000);
-	}
-	printk("micro-ROS agent reachable, creating the node\n");
-
-	rcl_allocator_t allocator = rcl_get_default_allocator();
-	rclc_support_t support;
-
-	/* create init_options */
-	RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
-
-	/* create node */
-	rcl_node_t node;
-	RCCHECK(rclc_node_init_default(&node, "nucleo_f767zi_node", "", &support));
-
-	/* create publisher (1 Hz heartbeat counter) */
-	RCCHECK(rclc_publisher_init_default(
-		&heartbeat_publisher,
-		&node,
-		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-		"zephyr_heartbeat"));
-
-	/* create subscription to the led_cmd topic */
-	RCCHECK(rclc_subscription_init_default(
-		&led_cmd_subscription,
-		&node,
-		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-		"zephyr_led_cmd"));
-
-	/* create periodic timer for the heartbeat */
-	const unsigned int timer_timeout = 1000;
-	RCCHECK(rclc_timer_init_default2(
-		&heartbeat_timer,
-		&support,
-		RCL_MS_TO_NS(timer_timeout),
-		heartbeat_timer_callback,
-		true));
-
-	/* create executor: timer + subscription */
-	rclc_executor_t executor;
-	RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
-	RCCHECK(rclc_executor_add_timer(&executor, &heartbeat_timer));
-	RCCHECK(rclc_executor_add_subscription(
-		&executor, &led_cmd_subscription, &led_cmd_msg,
-		&led_cmd_subscription_callback, ON_NEW_DATA));
-
 	heartbeat_msg.data = 0;
 
-	printk("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
-	/* Spin with a 1 ms wait instead of 10 ms + k_msleep(10), so a command is
-	 * handed to the subscription callback within ~1-2 ms of arriving on the
-	 * socket.
-	 */
-	while (1) {
-		rclc_executor_spin_some(&executor, RCL_MS_TO_NS(1));
-		k_msleep(1);
-	}
+	/* Ping immediately on the first pass. */
+	last_ping_ms = k_uptime_get() - RECONNECT_PING_PERIOD_MS;
+	last_blink_ms = k_uptime_get();
 
-	/* free unused resources (not reached in this demo) */
-	RCCHECK(rcl_publisher_fini(&heartbeat_publisher, &node));
-	RCCHECK(rcl_subscription_fini(&led_cmd_subscription, &node));
-	RCCHECK(rcl_timer_fini(&heartbeat_timer));
-	RCSOFTCHECK(rclc_executor_fini(&executor));
-	RCCHECK(rcl_node_fini(&node));
-	return 0;
+	for (;;) {
+		switch (state) {
+		case CONN_WAITING_AGENT:
+			update_disconnected_led(&last_blink_ms, &led_on);
+
+			if (period_elapsed(&last_ping_ms,
+					   RECONNECT_PING_PERIOD_MS)) {
+				if (rmw_uros_ping_agent(PING_TIMEOUT_MS,
+							PING_ATTEMPTS) == RMW_RET_OK) {
+					state = CONN_AGENT_AVAILABLE;
+					break;
+				}
+
+				attempts++;
+				if (attempts <= 10 || attempts % 10 == 0) {
+					printk("Waiting for the micro-ROS agent (%s:%s), attempt %u...\n",
+					       CONFIG_MICROROS_AGENT_IP,
+					       CONFIG_MICROROS_AGENT_PORT,
+					       attempts);
+				}
+			}
+
+			k_msleep(10);
+			break;
+
+		case CONN_AGENT_AVAILABLE:
+			if (!create_entities()) {
+				state = CONN_WAITING_AGENT;
+				last_ping_ms = k_uptime_get();
+				break;
+			}
+
+			printk("micro-ROS agent reachable, node created\n");
+			printk("micro-ROS node running: publishing /zephyr_heartbeat, subscribing /zephyr_led_cmd\n");
+			attempts = 0;
+			led_on = false;
+			heartbeat_led_set(false);
+			last_ping_ms = k_uptime_get();
+			state = CONN_AGENT_CONNECTED;
+			break;
+
+		case CONN_AGENT_CONNECTED:
+			if (period_elapsed(&last_ping_ms,
+					   CONNECTED_PING_PERIOD_MS) &&
+			    rmw_uros_ping_agent(PING_TIMEOUT_MS,
+						PING_ATTEMPTS) != RMW_RET_OK) {
+				printk("micro-ROS agent lost, dropping the session\n");
+				state = CONN_AGENT_DISCONNECTED;
+				break;
+			}
+
+			/* Spin with a 1 ms wait instead of 10 ms + k_msleep(10),
+			 * so a command is handed to the subscription callback
+			 * within ~1-2 ms of arriving on the socket.
+			 */
+			(void)rclc_executor_spin_some(&executor,
+						      RCL_MS_TO_NS(1));
+			k_msleep(1);
+			break;
+
+		case CONN_AGENT_DISCONNECTED:
+			destroy_entities();
+			heartbeat_led_set(false);
+			led_on = false;
+			attempts = 0;
+			last_blink_ms = k_uptime_get();
+			last_ping_ms = k_uptime_get();
+			state = CONN_WAITING_AGENT;
+			break;
+		}
+	}
 }

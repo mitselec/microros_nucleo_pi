@@ -5,6 +5,23 @@ Each section becomes the body of the matching GitHub release. The `release` job 
 (`v1.0.1` -> `## [1.0.1]`) and appends the flashing instructions. Add the section
 before pushing the tag; without one, the release falls back to a generic description.
 
+## [Unreleased]
+
+The heartbeat now reflects the real link state.
+
+### Changed
+
+- The node follows the micro-ROS reconnection state machine. It pings the agent
+  once per second while connected and every 500 ms while reconnecting, destroys
+  the node when the ping fails, and creates it again when the agent returns.
+- The heartbeat counter and the green LED advance only after `rcl_publish()`
+  confirms the sample. A failed publish no longer increments the counter or
+  toggles the LED.
+- The green LED blinks fast (100 ms) while the agent is unreachable, instead of
+  continuing the 1 Hz heartbeat.
+- The transport logs the first successful socket open only, so reconnect attempts
+  do not flood the console.
+
 ## [1.0.1] - 2026-11-23
 
 Faster LED commands, and a version stamp in the boot log.
