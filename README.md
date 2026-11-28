@@ -4,7 +4,7 @@
 
 Two parts, connected over **UDP on the LAN**:
 
-> **Status:** verified end-to-end. Nucleo at `192.168.0.230` (Zephyr v4.1.0), Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, `ros2 topic pub` switches the blue LED on/off, and the board recreates its node after the agent restarts.
+> **Status:** the connected path is verified end-to-end. Nucleo at `192.168.0.230` (Zephyr v4.1.0), Pi 3B+ running the agent in Docker. The heartbeat shows up in `ros2 topic echo` at 1 Hz, and `ros2 topic pub` switches the blue LED on/off. The agent-loss and reconnect path is build-verified and follows the micro-ROS reconnection pattern; it has not been exercised on the board here yet.
 
 ```mermaid
 flowchart LR

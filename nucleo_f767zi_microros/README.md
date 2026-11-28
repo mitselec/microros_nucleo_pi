@@ -343,3 +343,6 @@ session immediately.
   port and check the board revision before blaming the firmware.
 - This module's Kconfig resource counters (`CONFIG_MICROROS_PUBLISHERS` etc.) are `string`
   typed oddities; leave the defaults unless you add more endpoints than the demo uses.
+- The agent-loss and reconnect path follows the micro-ROS state machine and builds in CI,
+  but the outage and restart sequence has not been exercised on hardware here. If the board
+  does not come back after the agent restarts, capture the console log and the agent log.
